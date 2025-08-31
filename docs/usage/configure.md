@@ -150,6 +150,9 @@ GUARD_EXT_DELETE_IF_ALL_BLOCKED=1             # (default) – delete only if all
 GUARD_EXT_DELETE_IF_ANY_BLOCKED=0             # – set to 1 to delete if any file is disallowed
 GUARD_EXT_VIOLATION_TAG=trash:ext
 
+# File unchecking (new feature)
+GUARD_UNCHECK_BLOCKED_FILES=1                 # (default) – uncheck disallowed files instead of deleting torrent
+
 # Disc set override (used by ISO detection and defaults)
 GUARD_DISC_EXTS="iso,img,mdf,nrg,cue,bin"
 ```
@@ -158,6 +161,19 @@ GUARD_DISC_EXTS="iso,img,mdf,nrg,cue,bin"
 
 - **Block Strategy**: Allow everything except blocked extensions
 - **Allow Strategy**: Only allow specified extensions
+
+### Enforcement Options
+
+- **GUARD_EXT_DELETE_IF_ALL_BLOCKED**: Delete torrent only if ALL files are disallowed (default: true)
+- **GUARD_EXT_DELETE_IF_ANY_BLOCKED**: Delete torrent if ANY file is disallowed (default: false) 
+- **GUARD_UNCHECK_BLOCKED_FILES**: Uncheck (don't download) disallowed files instead of deleting the entire torrent (default: true)
+
+When `GUARD_UNCHECK_BLOCKED_FILES=1`, qbit-guard will:
+- Identify files that match the blocklist
+- Set their priority to 0 (don't download) if some files are allowed
+- Add a "guard:partial" tag to indicate partial downloads
+- Allow the torrent to continue downloading only the allowed files
+- Still delete the torrent if ALL files would be unchecked
 
 ### Optional Config File
 

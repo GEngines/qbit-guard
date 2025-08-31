@@ -150,6 +150,9 @@ class Config:
     ext_delete_if_all_blocked: bool = os.getenv("GUARD_EXT_DELETE_IF_ALL_BLOCKED", "1") in ("1","true","yes")
     ext_delete_if_any_blocked: bool = os.getenv("GUARD_EXT_DELETE_IF_ANY_BLOCKED", "0") in ("1","true","yes")
     ext_violation_tag: str = os.getenv("GUARD_EXT_VIOLATION_TAG", "trash:ext")
+    
+    # New option: uncheck blocked files instead of deleting the entire torrent (default True)
+    uncheck_blocked_files: bool = os.getenv("GUARD_UNCHECK_BLOCKED_FILES", "1") in ("1","true","yes")
 
     # Disc-image set (used for ISO/BDMV detection); can be overridden
     disc_exts_env: str = os.getenv("GUARD_DISC_EXTS", "")  # e.g. "iso,img,mdf,toast"
@@ -204,9 +207,9 @@ class Config:
         if env_strategy in ("block","allow"):
             self.ext_strategy = env_strategy
 
-        log.info("Extension policy | strategy=%s | allowed=%d | blocked=%d | enforce(any=%s, all=%s)",
+        log.info("Extension policy | strategy=%s | allowed=%d | blocked=%d | enforce(any=%s, all=%s, uncheck=%s)",
                  self.ext_strategy, len(self.allowed_exts), len(self.blocked_exts),
-                 self.ext_delete_if_any_blocked, self.ext_delete_if_all_blocked)
+                 self.ext_delete_if_any_blocked, self.ext_delete_if_all_blocked, self.uncheck_blocked_files)
 
     # --- Policy helpers ---
     def is_ext_allowed(self, ext: str) -> bool:
@@ -338,6 +341,14 @@ class QbitClient:
 
     def trackers(self, h: str) -> List[Dict[str, Any]]:
         return self.get_json("/api/v2/torrents/trackers", {"hash": h}) or []
+    
+    def set_file_priority(self, h: str, file_ids: List[int], priority: int) -> None:
+        """Set priority for specific files in a torrent. Priority 0 = don't download, 1 = normal."""
+        try:
+            id_str = "|".join(str(i) for i in file_ids)
+            self.post("/api/v2/torrents/filePrio", {"hash": h, "id": id_str, "priority": str(priority)})
+        except Exception as e:
+            log.warning("qB: could not set file priority for %s: %s", h, e)
 
 
 # --------------------------- Sonarr / Radarr ---------------------------
@@ -842,9 +853,16 @@ class IsoCleaner:
         if disallowed:
             total = len(relevant)
             bad = len(disallowed)
+            allowed = [f for f in relevant if self.cfg.is_path_allowed(f.get("name",""))]
+            good = len(allowed)
             sample = (disallowed[0].get("name","") if disallowed else "")
             log.info("Ext policy: %d/%d file(s) disallowed. e.g., %s", bad, total, sample)
-            if self.cfg.ext_delete_if_any_blocked or (self.cfg.ext_delete_if_all_blocked and bad == total):
+            
+            # Check if we should delete the entire torrent
+            should_delete = (self.cfg.ext_delete_if_any_blocked or 
+                           (self.cfg.ext_delete_if_all_blocked and bad == total))
+            
+            if should_delete:
                 # Delete due to extension policy
                 self.qbit.add_tags(torrent_hash, self.cfg.ext_violation_tag)
                 self._blocklist_arr_if_applicable(category_norm, torrent_hash)
@@ -857,6 +875,30 @@ class IsoCleaner:
                 else:
                     log.info("DRY-RUN: would remove torrent %s due to extension policy.", torrent_hash)
                 return True
+            
+            # If uncheck_blocked_files is enabled and we have some allowed files
+            elif self.cfg.uncheck_blocked_files and good > 0:
+                # Get file IDs for disallowed files (qBittorrent uses 0-based indexing)
+                disallowed_ids = []
+                for i, f in enumerate(all_files):
+                    if not self.cfg.is_path_allowed(f.get("name","")) and int(f.get("size",0)) > 0:
+                        disallowed_ids.append(i)
+                
+                if disallowed_ids:
+                    log.info("Unchecking %d disallowed file(s), keeping %d allowed file(s)", bad, good)
+                    if not self.cfg.dry_run:
+                        try:
+                            # Set priority to 0 (don't download) for disallowed files
+                            self.qbit.set_file_priority(torrent_hash, disallowed_ids, 0)
+                            # Add partial tag to indicate some files were unchecked
+                            self.qbit.add_tags(torrent_hash, "guard:partial")
+                            log.info("Unchecked %d file(s) from torrent %s due to extension policy.", 
+                                   len(disallowed_ids), torrent_hash)
+                        except Exception as e:
+                            log.error("Failed to uncheck files: %s", e)
+                    else:
+                        log.info("DRY-RUN: would uncheck %d file(s) from torrent %s due to extension policy.", 
+                               len(disallowed_ids), torrent_hash)
 
         # ---- Disc-image detection (ISO/BDMV) ----
         all_discish = (len(relevant) > 0) and all(self._is_disc_path(f.get("name","")) for f in relevant)
@@ -876,8 +918,9 @@ class IsoCleaner:
                 log.info("DRY-RUN: would remove torrent %s (ISO/BDMV-only).", torrent_hash)
             return True
 
-        log.info("ISO/Ext check: keepable=%s, files=%d (disallowed=%d).",
-                 keepable, len(relevant), len(disallowed))
+        log.info("ISO/Ext check: keepable=%s, files=%d (disallowed=%d, action=%s).",
+                 keepable, len(relevant), len(disallowed), 
+                 "partial" if (disallowed and self.cfg.uncheck_blocked_files and len([f for f in relevant if self.cfg.is_path_allowed(f.get("name",""))]) > 0) else "passed")
         return False
 
 
