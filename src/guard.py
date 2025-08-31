@@ -206,6 +206,8 @@ class Config:
     disc_exts_env: str = os.getenv("GUARD_DISC_EXTS", "")  # e.g. "iso,img,mdf,toast"
     disc_exts: Set[str] = None  # set in __post_init__
 
+    detailed_logging: bool = os.getenv("LOG_LEVEL", "INFO").upper() == "DETAILED"
+
 
     def __post_init__(self):
         # defaults
@@ -909,7 +911,7 @@ class IsoCleaner:
             log.info("Ext policy: %d/%d file(s) disallowed. e.g., %s", bad, total, sample)
             
             # Enhanced detailed logging with extension breakdown
-            if log.isEnabledFor(DETAILED_LEVEL):
+            if self.cfg.detailed_logging:
                 detailed_summary = _generate_detailed_extension_summary(disallowed)
                 log.detailed("Extension policy details: %s", detailed_summary)
             
