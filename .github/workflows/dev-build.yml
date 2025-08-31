@@ -26,53 +26,27 @@ concurrency:
 
 env:
   IMAGE_NAME: qbit-guard
-  CURRENT_DATE: '2025-08-31'
 
 jobs:
-  version:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      new_version: ${{ steps.version_info.outputs.new_version }}
-      new_tag: ${{ steps.version_info.outputs.new_tag }}
-      build_version: ${{ steps.version_info.outputs.build_version }}
-      
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
+
       - name: Generate dev version with timestamp
-        id: version_info
+        id: version
         run: |
           # Get the current timestamp in a format suitable for versioning
           TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
           
           # Create a proper version string for the dev build
           VERSION="0.0.0-dev.${TIMESTAMP}"
-          TAG="v${VERSION}"
           
-          echo "new_version=$VERSION" >> $GITHUB_OUTPUT
-          echo "new_tag=$TAG" >> $GITHUB_OUTPUT
           echo "build_version=$VERSION" >> $GITHUB_OUTPUT
-          
-  docker:
-    runs-on: ubuntu-latest
-    needs: [version]
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Compute registry image name
-        id: names
-        run: |
-          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="${OWNER_LC}/${{ env.IMAGE_NAME }}"
-          echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
-          echo "image=ghcr.io/${IMAGE}" >> $GITHUB_OUTPUT
-
-      - name: Set up QEMU (multi-arch)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -85,16 +59,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.names.outputs.image }}
-          tags: |
-            type=raw,value=dev
-            type=raw,value=${{ needs.version.outputs.build_version }}
-            type=ref,event=branch
-            type=sha
+      - name: Prepare tags
+        id: prep
+        run: |
+          REPO="ghcr.io/${{ github.repository_owner | tr '[:upper:]' '[:lower:]' }}/${{ env.IMAGE_NAME }}"
+          VERSION="${{ steps.version.outputs.build_version }}"
+          
+          # Define tags explicitly
+          TAGS="${REPO}:dev"
+          TAGS="${TAGS},${REPO}:${VERSION}"
+          TAGS="${TAGS},${REPO}:develop"
+          TAGS="${TAGS},${REPO}:sha-${GITHUB_SHA::8}"
+          
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "repo=${REPO}" >> $GITHUB_OUTPUT
 
       - name: Build & push
         uses: docker/build-push-action@v6
@@ -103,16 +81,14 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.prep.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUILD_VERSION=${{ needs.version.outputs.build_version }}
+            BUILD_VERSION=${{ steps.version.outputs.build_version }}
 
       - name: Push extra tag (from workflow_dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_tag != '' }}
         run: |
-          SRC="${{ steps.names.outputs.image }}:$(echo '${{ steps.meta.outputs.tags }}' | tr ',' '\n' | head -n1 | xargs)"
-          TGT="${{ steps.names.outputs.image }}:${{ inputs.extra_tag }}"
-          echo "Retagging $SRC -> $TGT"
-          docker buildx imagetools create -t "$TGT" "$SRC"
+          REPO="${{ steps.prep.outputs.repo }}"
+          docker buildx imagetools create -t "${REPO}:${{ inputs.extra_tag }}" "${REPO}:dev"
