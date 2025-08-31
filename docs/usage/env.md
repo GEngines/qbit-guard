@@ -116,7 +116,7 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOG_LEVEL` | `INFO` | Logging verbosity: `INFO` or `DEBUG` |
+| `LOG_LEVEL` | `INFO` | Logging verbosity: `INFO`, `DETAILED`, or `DEBUG` |
 | `USER_AGENT` | `qbit-guard/2.0` | HTTP User-Agent string for API calls |
 
 ---
@@ -207,7 +207,7 @@ Variables with meaningful defaults that you may not need to set:
 | `EARLY_GRACE_HOURS` | `6` | Reasonable pre-air grace period |
 | `EARLY_HARD_LIMIT_HOURS` | `72` | Prevents very early releases |
 | `MIN_KEEPABLE_VIDEO_MB` | `50` | Filters out samples and extras |
-| `LOG_LEVEL` | `INFO` | Change to `DEBUG` for troubleshooting |
+| `LOG_LEVEL` | `INFO` | Change to `DETAILED` for extension details or `DEBUG` for troubleshooting |
 | `USER_AGENT` | `qbit-guard/2.0` | HTTP User-Agent for API calls |
 
 ---

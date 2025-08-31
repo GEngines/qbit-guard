@@ -28,9 +28,23 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 from version import VERSION
 # --------------------------- Logging ---------------------------
 
+# Add custom DETAILED logging level (between INFO=20 and DEBUG=10)
+DETAILED_LEVEL = 15
+logging.addLevelName(DETAILED_LEVEL, "DETAILED")
+
+def detailed(self, message, *args, **kwargs):
+    """Log message with DETAILED level."""
+    if self.isEnabledFor(DETAILED_LEVEL):
+        self._log(DETAILED_LEVEL, message, args, **kwargs)
+
+logging.Logger.detailed = detailed
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Map DETAILED to our custom level
+level_value = DETAILED_LEVEL if LOG_LEVEL == "DETAILED" else getattr(logging, LOG_LEVEL, logging.INFO)
+
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    level=level_value,
     format="%(asctime)s | %(levelname)s | %(message)s",
     stream=sys.stdout,
 )
@@ -51,6 +65,40 @@ def _ext_of(path: str) -> str:
     if "." not in base:
         return ""
     return base.rsplit(".", 1)[-1].lower()
+
+
+def _generate_detailed_extension_summary(disallowed_files: List[Dict[str, Any]], max_examples: int = 5) -> str:
+    """Generate detailed summary of blocked extensions with counts and examples."""
+    if not disallowed_files:
+        return ""
+    
+    # Group files by extension
+    ext_groups = {}
+    for file_info in disallowed_files:
+        filename = file_info.get("name", "")
+        ext = _ext_of(filename)
+        if ext not in ext_groups:
+            ext_groups[ext] = []
+        ext_groups[ext].append(filename)
+    
+    # Sort by count (descending) then by extension name
+    sorted_exts = sorted(ext_groups.items(), key=lambda x: (-len(x[1]), x[0]))
+    
+    summary_parts = []
+    for ext, filenames in sorted_exts:
+        count = len(filenames)
+        ext_display = f".{ext}" if ext else "(no extension)"
+        
+        # Show up to max_examples filenames for this extension
+        examples = filenames[:max_examples]
+        examples_str = ", ".join(f'"{os.path.basename(f)}"' for f in examples)
+        
+        if count > max_examples:
+            examples_str += f" (+{count - max_examples} more)"
+        
+        summary_parts.append(f"{ext_display}: {count} file{'s' if count != 1 else ''} ({examples_str})")
+    
+    return "; ".join(summary_parts)
 
 
 # --------------------------- Config ---------------------------
@@ -856,7 +904,14 @@ class IsoCleaner:
             allowed = [f for f in relevant if self.cfg.is_path_allowed(f.get("name",""))]
             good = len(allowed)
             sample = (disallowed[0].get("name","") if disallowed else "")
+            
+            # Standard info logging
             log.info("Ext policy: %d/%d file(s) disallowed. e.g., %s", bad, total, sample)
+            
+            # Enhanced detailed logging with extension breakdown
+            if log.isEnabledFor(DETAILED_LEVEL):
+                detailed_summary = _generate_detailed_extension_summary(disallowed)
+                log.detailed("Extension policy details: %s", detailed_summary)
             
             # Check if we should delete the entire torrent
             should_delete = (self.cfg.ext_delete_if_any_blocked or 

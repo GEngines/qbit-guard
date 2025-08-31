@@ -26,9 +26,23 @@ import urllib.error
 from guard import Config, HttpClient, QbitClient, TorrentGuard
 from version import VERSION
 
+# Add custom DETAILED logging level (between INFO=20 and DEBUG=10)
+DETAILED_LEVEL = 15
+logging.addLevelName(DETAILED_LEVEL, "DETAILED")
+
+def detailed(self, message, *args, **kwargs):
+    """Log message with DETAILED level."""
+    if self.isEnabledFor(DETAILED_LEVEL):
+        self._log(DETAILED_LEVEL, message, args, **kwargs)
+
+logging.Logger.detailed = detailed
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Map DETAILED to our custom level
+level_value = DETAILED_LEVEL if LOG_LEVEL == "DETAILED" else getattr(logging, LOG_LEVEL, logging.INFO)
+
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    level=level_value,
     format="%(asctime)s | %(levelname)s | %(message)s",
     stream=sys.stdout,
 )

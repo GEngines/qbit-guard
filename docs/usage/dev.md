@@ -117,6 +117,29 @@ Debug mode provides detailed information about:
 - Whitelist matching logic
 - Metadata fetch progress
 
+### Enhanced Extension Logging
+
+For detailed extension blocking information without full debug output:
+
+```bash
+LOG_LEVEL=DETAILED
+```
+
+DETAILED mode provides:
+- All INFO-level messages
+- Enhanced extension policy summaries showing:
+  - Count of blocked files per extension type
+  - Example filenames for each blocked extension (up to 5 examples)
+  - Clear breakdown of why torrents are being blocked
+
+Example DETAILED output:
+```
+2025-01-15 12:00:00 | INFO | Ext policy: 8/12 file(s) disallowed. e.g., movie.iso
+2025-01-15 12:00:00 | DETAILED | Extension policy details: .iso: 3 files ("movie.iso", "disc2.iso", "extras.iso"); .exe: 2 files ("setup.exe", "crack.exe"); .rar: 3 files ("archive1.rar", "archive2.rar", "backup.rar")
+```
+
+This level is perfect for diagnosing extension policy issues without the verbosity of full DEBUG logging.
+
 ### Key Log Indicators
 
 Monitor these log messages:

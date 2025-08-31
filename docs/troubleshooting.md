@@ -368,9 +368,16 @@ docker-compose logs qbit-guard | grep -E "(ERROR|Unhandled error|failed)"
 
 ### Enable Detailed Logging
 
+For full debugging information:
 ```yaml
 environment:
   - LOG_LEVEL=DEBUG
+```
+
+For extension policy diagnostics without full debug verbosity:
+```yaml
+environment:
+  - LOG_LEVEL=DETAILED
 ```
 
 Debug mode shows:
@@ -379,6 +386,11 @@ Debug mode shows:
 - File analysis decisions
 - Whitelist matching logic
 - Metadata fetch progress
+
+DETAILED mode shows:
+- All INFO-level messages
+- Enhanced extension policy summaries with per-extension counts and examples
+- Perfect for diagnosing why torrents are blocked without debug noise
 
 ### Testing Mode
 
