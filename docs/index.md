@@ -127,8 +127,12 @@ flowchart TD
         - If **blocked** → blocklist in *arr, tag `trash:preair`, delete torrent
         - If **allowed** → continue
     4. **Metadata fetch** → briefly start torrent to get file list, respect wait/budget limits, then stop
-    5. **ISO/BDMV cleanup** → if disc-image-only and no keepable video, blocklist + delete (tag `trash:iso`)
-    6. **Start for real** → tag `guard:allowed` and start torrent
+    5. **Extension policy** → check files against allow/block lists:
+        - If **all blocked** → delete torrent (optional: tag `trash:ext`)
+        - If **some blocked** → uncheck blocked files, tag `guard:partial`, continue with allowed files
+        - If **none blocked** → continue
+    6. **ISO/BDMV cleanup** → if disc-image-only and no keepable video, blocklist + delete (tag `trash:iso`)
+    7. **Start for real** → tag `guard:allowed` and start torrent
 
 !!! note "Keepable Video Files"
     Files with extensions: `.mkv .mp4 .m4v .avi .ts .m2ts .mov .webm` and size ≥ threshold.
