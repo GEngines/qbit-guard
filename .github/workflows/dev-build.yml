@@ -34,6 +34,7 @@ jobs:
     outputs:
       new_version: ${{ steps.version_info.outputs.new_version }}
       new_tag: ${{ steps.version_info.outputs.new_tag }}
+      build_version: ${{ steps.version_info.outputs.build_version }}
       
     steps:
       - name: Checkout
@@ -41,23 +42,19 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Increment version and create dev tag
-        id: tag_version
-        uses: anothrNick/github-tag-action@1.64.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WITH_V: true
-          DEFAULT_BUMP: patch
-          CUSTOM_TAG: dev-${{ github.run_number }}
-      
-      - name: Set version output
+      - name: Generate dev version with timestamp
         id: version_info
         run: |
-          TAG="${{ steps.tag_version.outputs.new_tag }}-dev"
-          VERSION="${{ steps.tag_version.outputs.new_version }}-dev"
+          # Get the current timestamp in a format suitable for versioning
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
           
-          echo "new_tag=$TAG" >> $GITHUB_OUTPUT
+          # Create a proper version string for the dev build
+          VERSION="0.0.0-dev.${TIMESTAMP}"
+          TAG="v${VERSION}"
+          
           echo "new_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "new_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "build_version=$VERSION" >> $GITHUB_OUTPUT
           
   docker:
     runs-on: ubuntu-latest
@@ -88,15 +85,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Set build version
-        id: build_args
-        run: |
-          VERSION="${{ needs.version.outputs.new_version }}"
-          if [[ "$VERSION" == v* ]]; then
-            VERSION="${VERSION:1}"
-          fi
-          echo "build_version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -104,7 +92,7 @@ jobs:
           images: ${{ steps.names.outputs.image }}
           tags: |
             type=raw,value=dev
-            type=raw,value=${{ needs.version.outputs.new_version }}
+            type=raw,value=${{ needs.version.outputs.build_version }}
             type=ref,event=branch
             type=sha
 
@@ -119,7 +107,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUILD_VERSION=${{ steps.build_args.outputs.build_version }}
+            BUILD_VERSION=${{ needs.version.outputs.build_version }}
 
       - name: Push extra tag (from workflow_dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_tag != '' }}
