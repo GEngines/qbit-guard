@@ -28,10 +28,15 @@ This page provides working examples of qbit-guard configurations for different d
           - QBIT_PASS=your_password_here
           - QBIT_ALLOWED_CATEGORIES=tv-sonarr,radarr
           
-          # Basic pre-air checking with Sonarr
+          # Pre-air checking with Sonarr
           - ENABLE_PREAIR_CHECK=1
           - SONARR_URL=http://sonarr:8989
           - SONARR_APIKEY=your_sonarr_api_key_here
+          
+          # Pre-air checking with Radarr (for movies)
+          - ENABLE_RADARR_PREAIR_CHECK=1
+          - RADARR_URL=http://radarr:7878
+          - RADARR_APIKEY=your_radarr_api_key_here
           
           # ISO cleanup
           - ENABLE_ISO_CHECK=1
@@ -44,7 +49,7 @@ This page provides working examples of qbit-guard configurations for different d
     ```
 
     !!! tip "Getting Started"
-        This minimal setup enables pre-air checking and ISO cleanup. Perfect for testing qbit-guard functionality.
+        This minimal setup enables pre-air checking for both TV shows and movies, plus ISO cleanup. Perfect for testing qbit-guard functionality.
 
 === "Full Configuration"
 
@@ -76,6 +81,12 @@ This page provides working examples of qbit-guard configurations for different d
           - EARLY_WHITELIST_GROUPS=SCENE,P2P,WEB
           - WHITELIST_OVERRIDES_HARD_LIMIT=1
           
+          # Pre-air checking with Radarr (for movies)
+          - ENABLE_RADARR_PREAIR_CHECK=1
+          - RADARR_URL=http://radarr:7878
+          - RADARR_APIKEY=your_radarr_api_key_here
+          - RADARR_PREAIR_CATEGORIES=radarr
+          
           # Internet cross-verification
           - INTERNET_CHECK_PROVIDER=both
           - TVDB_APIKEY=your_tvdb_api_key_here
@@ -105,7 +116,7 @@ This page provides working examples of qbit-guard configurations for different d
     ```
 
     !!! success "Production Ready"
-        This configuration includes all features: pre-air checking, internet verification, ISO cleanup, and extension filtering.
+        This configuration includes all features: TV and movie pre-air checking, internet verification, ISO cleanup, and extension filtering.
 
 === "High Performance"
 
@@ -145,9 +156,12 @@ This page provides working examples of qbit-guard configurations for different d
           
           # Enable all checks
           - ENABLE_PREAIR_CHECK=1
+          - ENABLE_RADARR_PREAIR_CHECK=1
           - ENABLE_ISO_CHECK=1
           - SONARR_URL=http://sonarr:8989
           - SONARR_APIKEY=your_sonarr_api_key_here
+          - RADARR_URL=http://radarr:7878
+          - RADARR_APIKEY=your_radarr_api_key_here
           
           - LOG_LEVEL=INFO
         networks: [arr-network]
@@ -209,16 +223,20 @@ This page provides working examples of qbit-guard configurations for different d
       - QBIT_PASS=your_password_here
       - QBIT_ALLOWED_CATEGORIES=radarr
       
-      # No pre-air checking (movies don't have air dates)
+      # Movie pre-air checking with Radarr
+      - ENABLE_RADARR_PREAIR_CHECK=1
+      - RADARR_URL=http://radarr:7878
+      - RADARR_APIKEY=your_radarr_api_key_here
+      - RADARR_PREAIR_CATEGORIES=radarr
+      - EARLY_GRACE_HOURS=6
+      - EARLY_HARD_LIMIT_HOURS=72
+      
+      # Disable TV pre-air checking
       - ENABLE_PREAIR_CHECK=0
       
       # Enable ISO cleanup for movie disc images
       - ENABLE_ISO_CHECK=1
       - MIN_KEEPABLE_VIDEO_MB=100
-      
-      # Radarr integration for blocklisting
-      - RADARR_URL=http://radarr:7878
-      - RADARR_APIKEY=your_radarr_api_key_here
       
       # Strict extension filtering for movies
       - GUARD_EXT_STRATEGY=allow
@@ -229,7 +247,7 @@ This page provides working examples of qbit-guard configurations for different d
     ```
 
     !!! tip "Movie Focus"
-        Optimized for movie downloads with ISO cleanup and strict file type filtering.
+        Optimized for movie downloads with pre-air checking, ISO cleanup and strict file type filtering.
 
 === "Testing & Development"
 
@@ -264,9 +282,12 @@ This page provides working examples of qbit-guard configurations for different d
       
       # Enable features for testing
       - ENABLE_PREAIR_CHECK=1
+      - ENABLE_RADARR_PREAIR_CHECK=1
       - ENABLE_ISO_CHECK=1
       - SONARR_URL=http://sonarr:8989
       - SONARR_APIKEY=your_sonarr_api_key_here
+      - RADARR_URL=http://radarr:7878
+      - RADARR_APIKEY=your_radarr_api_key_here
     ```
 
     !!! danger "Dry Run Mode"
