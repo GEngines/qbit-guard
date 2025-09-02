@@ -25,6 +25,8 @@ import urllib.parse as uparse
 import urllib.request as ureq
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
+
+import urllib
 from version import VERSION
 # --------------------------- Logging ---------------------------
 
@@ -169,6 +171,9 @@ class Config:
     tvdb_order: str = os.getenv("TVDB_ORDER", "default").strip().lower()  # default|official
     tvdb_timeout: int = int(os.getenv("TVDB_TIMEOUT_SEC", "8"))
     tvdb_bearer: str = os.getenv("TVDB_BEARER", "")
+    tmdb_base: str = os.getenv("TMDB_BASE", "https://api.themoviedb.org/3").rstrip("/")
+    tmdb_apikey: str = os.getenv("TMDB_APIKEY", "")
+    tmdb_timeout: int = int(os.getenv("TMDB_TIMEOUT_SEC", "8"))
 
     # ISO cleaner / metadata fetch
     enable_iso_check: bool = os.getenv("ENABLE_ISO_CHECK", "1") == "1"
@@ -436,6 +441,28 @@ class BaseArr:
                 last = e
                 time.sleep(min(2**a, 8))
         raise last
+    
+    def _put(self, path: str, obj: Dict[str, Any]) -> Any:
+        """PUT JSON with retries; returns parsed JSON (or None if empty)."""
+        url = f"{self.base}/api/v3{path}"
+        payload = json.dumps(obj or {}).encode("utf-8")
+        headers = {
+            "X-Api-Key": self.key,
+            "Content-Type": "application/json",
+            # keep UA consistent with HttpClient
+            "User-Agent": getattr(self.http, "user_agent", "qbit-guard"),
+        }
+        last = None
+        for a in range(self.retries):
+            try:
+                req = ureq.Request(url, data=payload, headers=headers, method="PUT")
+                with self.http.opener.open(req, timeout=self.timeout) as r:
+                    raw = r.read()
+                    return None if not raw else json.loads(raw.decode("utf-8"))
+            except Exception as e:
+                last = e
+                time.sleep(min(2 ** a, 8))
+        raise last
 
     def _delete(self, path: str, query: Dict[str, Any]) -> None:
         url = f"{self.base}/api/v3{path}"
@@ -530,7 +557,7 @@ class SonarrClient(BaseArr):
             return None
 
 class RadarrClient(BaseArr):
-    """Radarr v3 client with blocklist helpers (used on ISO deletes)."""
+    """Radarr v3 client with blocklist helpers."""
     def __init__(self, cfg: Config, http: HttpClient):
         super().__init__(cfg.radarr_url, cfg.radarr_apikey, http, cfg.radarr_timeout_sec, cfg.radarr_retries, "Radarr")
 
@@ -564,6 +591,44 @@ class RadarrClient(BaseArr):
         except Exception as e:
             log.warning("Radarr: movie %s fetch failed: %s", movie_id, e)
             return None
+        
+
+    def ensure_minimum_availability_released(self, movie_id: int) -> bool:
+        """
+        For a single movie, set minimumAvailability to 'released' only if it differs.
+        Returns True if an update was performed, False otherwise.
+        """
+        if not self.enabled:
+            return False
+
+        # Fetch current movie object
+        m = self.movie(movie_id) or {}
+        if not m:
+            log.warning("Radarr: movie %s not found (cannot update minimumAvailability)", movie_id)
+            return False
+
+        current = m.get("minimumAvailability")
+        if current == "released":
+            log.info("Radarr: movie %s already has minimumAvailability='released'", movie_id)
+            return False
+
+        # Update field and PUT the full object
+        m["minimumAvailability"] = "released"
+        try:
+            # BaseArr usually provides _put like _get/_delete. Use it if available…
+            if hasattr(self, "_put"):
+                self._put(f"/movie/{movie_id}", m)
+            else:
+                # …otherwise fall back to the HTTP client if your BaseArr/HttpClient exposes a PUT.
+                # Adjust this branch to your HttpClient's interface if needed.
+                self.http.put(self.base_url + f"/api/v3/movie/{movie_id}", json=m, timeout=self.timeout)
+
+            log.info("Radarr: movie %s minimumAvailability set to 'released' (was %s)", movie_id, current)
+            return True
+        except Exception as e:
+            log.error("Radarr: failed to set minimumAvailability for movie %s: %s", movie_id, e)
+            return False
+
 
 
 # --------------------------- Utilities ---------------------------
@@ -700,50 +765,70 @@ class InternetDates:
             return None
         except Exception:
             return None
-
-    def tvdb_movie_release_date(self, movie: Dict[str, Any]) -> Optional[datetime.datetime]:
-        """Look up movie release date via TVDB API using movie ID."""
-        tvdb_id = movie.get("tvdbId") or None
-        if not tvdb_id:
-            return None
+    
+    def tmdb_movie_release_dates(self, movie: Dict[str, Any]) -> Dict[str, datetime.datetime]:
+        """
+        Look up various movie release dates via TMDB API.
+        Returns a dictionary with 'digital', 'physical', and 'theatrical' dates if available.
+        """
+        result = {
+            'digital': None,
+            'physical': None,
+            'theatrical': None
+        }
+        
+        if not self.cfg.tmdb_apikey:
+            return result
             
-        token = self._tvdb_login()
-        if not token:
-            return None
+        tmdb_id = movie.get("tmdbId") or None
+        if not tmdb_id:
+            return result
             
         try:
-            # TVDB v4 movie endpoint
-            url = f"{self.cfg.tvdb_base}/movies/{int(tvdb_id)}"
-            raw = self.http.get(url, headers={"Authorization": "Bearer " + token}, timeout=self.cfg.tvdb_timeout)
+            # TMDB movie details endpoint
+            url = f"{self.cfg.tmdb_base}/movie/{int(tmdb_id)}?api_key={self.cfg.tmdb_apikey}&append_to_response=release_dates"
+            raw = self.http.get(url, timeout=self.cfg.tmdb_timeout)
             j = json.loads(raw.decode("utf-8")) if raw else {}
             
-            movie_data = j.get("data") if isinstance(j, dict) else {}
-            if movie_data:
-                # Check various possible date fields
-                release_date = (movie_data.get("releaseDate") or 
-                              movie_data.get("firstAired") or 
-                              movie_data.get("year"))
-                
-                if release_date:
-                    # Handle different date formats
-                    if isinstance(release_date, str):
-                        if release_date.endswith("Z"):
-                            release_date = release_date[:-1] + "+00:00"
-                        if len(release_date) == 4 and release_date.isdigit():
-                            # Just a year, assume January 1st
-                            release_date += "-01-01T00:00:00+00:00"
-                        elif len(release_date) == 10 and release_date[4] == "-" and release_date[7] == "-":
-                            release_date += "T00:00:00+00:00"
-                        
-                        try:
-                            return datetime.datetime.fromisoformat(release_date)
-                        except Exception:
-                            pass
-                            
-        except Exception:
-            pass
+            # TMDB release date types:
+            # Type 1-3 = Premiere/Theatrical/Limited
+            # Type 4 = Digital
+            # Type 5 = Physical
+            release_dates = j.get("release_dates", {}).get("results", [])
             
-        return None
+            for country_data in release_dates:
+                for release in country_data.get("release_dates", []):
+                    date_str = release.get("release_date")
+                    if not date_str:
+                        continue
+                        
+                    parsed_date = parse_iso_utc(date_str)
+                    if not parsed_date:
+                        continue
+                        
+                    release_type = release.get("type")
+                    
+                    if release_type == 4:  # Digital
+                        if result['digital'] is None or parsed_date < result['digital']:
+                            result['digital'] = parsed_date
+                            
+                    elif release_type == 5:  # Physical
+                        if result['physical'] is None or parsed_date < result['physical']:
+                            result['physical'] = parsed_date
+                            
+                    elif release_type in (1, 2, 3):  # Theatrical
+                        if result['theatrical'] is None or parsed_date < result['theatrical']:
+                            result['theatrical'] = parsed_date
+                            
+            # Log what we found
+            for key, date in result.items():
+                if date:
+                    log.debug("TMDB: Found %s release date for movie %s: %s", key, tmdb_id, date)
+                
+        except Exception as e:
+            log.warning("TMDB: Failed to retrieve release dates for movie %s: %s", tmdb_id, e)
+                
+        return result
 
 
 # --------------------------- Pre-Air Gate ---------------------------
@@ -913,15 +998,33 @@ class PreAirMovieGate:
         for mid in movies:
             movie = self.radarr.movie(mid) or {}
             movie_cache[mid] = movie
-            
-            # Check various release date fields that Radarr might use
-            release_date = None
+
+            # First try to get digital release date from TMDB
+            tmdb_release_dates = self.internet.tmdb_movie_release_dates(movie)
+
+            # update minimum availability to released
+            self.radarr.ensure_minimum_availability_released(mid)
+
             for field in ["digitalRelease", "physicalRelease", "inCinemas", "releaseDate"]:
                 date_str = movie.get(field)
                 if date_str:
-                    release_date = parse_iso_utc(date_str)
+                    radarr_date = parse_iso_utc(date_str)
+                    log.info("Movie %s: Found Radarr release date from field %s: %s", mid, field, radarr_date)
                     break
-                    
+
+            # Apply Logic:
+
+            # 1. Check TMDB digital and physical dates first
+            release_date = tmdb_release_dates['digital'] or tmdb_release_dates['physical']
+
+            # 2. If those are empty, use theatrical date from TMDB
+            if release_date is None and tmdb_release_dates['theatrical']:
+                release_date = tmdb_release_dates['theatrical']
+                log.info("Movie %s: TMDB theatrical date available but no Digital/Physical date, considering as pre-air", mid)
+                return False, "block", hist
+            else:
+                release_date = radarr_date
+
             if release_date and release_date > now_utc():
                 future_hours.append(hours_until(release_date))
             elif release_date is None:
@@ -935,6 +1038,7 @@ class PreAirMovieGate:
             inet_future = []
             for mid in movies:
                 movie = movie_cache[mid]
+                
                 release_date = self.internet.tvdb_movie_release_date(movie)
                 if release_date and release_date > now_utc():
                     inet_future.append(hours_until(release_date))
