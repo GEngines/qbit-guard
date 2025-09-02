@@ -45,12 +45,13 @@ A zero-dependency Python guard for qBittorrent that provides intelligent torrent
 
 === "Pre-air Gate"
 
-    **Stops new TV torrents and validates air dates**
+    **Stops new TV torrents and unreleased movies**
     
-    - Checks `airDateUtc` with configurable grace/cap windows
+    - **TV Shows**: Checks `airDateUtc` via Sonarr with configurable grace/cap windows
+    - **Movies**: Checks release dates via Radarr (digitalRelease, physicalRelease, inCinemas)
     - Supports release group / indexer / tracker whitelisting
     - Blocks too-early releases automatically
-    - Integrates with Sonarr for metadata validation
+    - Integrates with Sonarr/Radarr for metadata validation
 
 === "ISO/BDMV Cleanup"
 
@@ -75,8 +76,8 @@ A zero-dependency Python guard for qBittorrent that provides intelligent torrent
     **Optional internet verification**
     
     - TVmaze and/or TheTVDB integration
-    - Cross-checks Sonarr air dates
-    - Improves accuracy of pre-air filtering
+    - Cross-checks Sonarr air dates and movie release dates
+    - Improves accuracy of pre-air filtering for both TV and movies
     - No API keys required for TVmaze
 
 === "qBittorrent Support"
@@ -107,24 +108,31 @@ flowchart TD
     B -->|Allowed| C[Stop & Tag: guard:stopped]
     B -->|Blocked| Z[Ignore]
     C --> D{Pre-air Gate}
-    D -->|Enabled| E[Check Sonarr API]
-    D -->|Disabled| F[Get Metadata]
-    E --> G{Air Date Check}
-    G -->|Too Early| H[Blocklist & Delete]
-    G -->|Allowed| F[Get Metadata]
-    F --> I{ISO/BDMV Check}
-    I -->|Disc Image Only| J[Blocklist & Delete]
-    I -->|Has Video| K[Tag: guard:allowed & Start]
-    H --> L[Tag: trash:preair]
-    J --> M[Tag: trash:iso]
-    K --> N[Active Download]
+    D -->|TV Show Category| E[Check Sonarr API]
+    D -->|Movie Category| F[Check Radarr API]  
+    D -->|Not Pre-air Category| G[Get Metadata]
+    E --> H{TV Air Date Check}
+    F --> I{Movie Release Date Check}
+    H -->|Too Early| J[Blocklist & Delete TV]
+    I -->|Too Early| K[Blocklist & Delete Movie]
+    H -->|Allowed| G[Get Metadata]
+    I -->|Allowed| G[Get Metadata]
+    G --> L{ISO/BDMV Check}
+    L -->|Disc Image Only| M[Blocklist & Delete]
+    L -->|Has Video| N[Tag: guard:allowed & Start]
+    J --> O[Tag: trash:preair]
+    K --> P[Tag: trash:preair-movie]
+    M --> Q[Tag: trash:iso]
+    N --> R[Active Download]
 ```
 
 !!! info "Flow Steps"
     1. **On add** → torrent immediately stopped and tagged `guard:stopped`
     2. **Category filter** → only `QBIT_ALLOWED_CATEGORIES` are processed  
-    3. **Pre-air gate** (if Sonarr category): consult Sonarr (+ optional TVmaze/TVDB)
-        - If **blocked** → blocklist in *arr, tag `trash:preair`, delete torrent
+    3. **Pre-air gate**: 
+        - **TV Shows** (if Sonarr category): consult Sonarr (+ optional TVmaze/TVDB)
+        - **Movies** (if Radarr category): consult Radarr for release dates
+        - If **blocked** → blocklist in *arr, tag `trash:preair` or `trash:preair-movie`, delete torrent
         - If **allowed** → continue
     4. **Metadata fetch** → briefly start torrent to get file list, respect wait/budget limits, then stop
     5. **Extension policy** → check files against allow/block lists:
@@ -148,8 +156,8 @@ flowchart TD
 |-----------|---------|---------|----------|
 | **qBittorrent** | 5.x (4.x supported) | Torrent client | :material-check: Required |
 | **Python** | 3.8+ | Script mode only | :material-minus: Optional |
-| **Sonarr** | v3+ | Pre-air checking | :material-minus: Optional |
-| **Radarr** | v3+ | Pre-air checking | :material-minus: Optional |
+| **Sonarr** | v3+ | TV pre-air checking | :material-minus: Optional |
+| **Radarr** | v3+ | Movie pre-air checking & ISO blocklisting | :material-minus: Optional |
 | **Network** | - | Service connectivity | :material-check: Required |
 
 ---
@@ -173,6 +181,9 @@ flowchart TD
           - ENABLE_PREAIR_CHECK=1
           - SONARR_URL=http://sonarr:8989
           - SONARR_APIKEY=your_api_key
+          - ENABLE_RADARR_PREAIR_CHECK=1
+          - RADARR_URL=http://radarr:7878
+          - RADARR_APIKEY=your_radarr_api_key
           - ENABLE_ISO_CHECK=1
           - LOG_LEVEL=INFO
         networks: [arr-network]
@@ -195,6 +206,9 @@ flowchart TD
       -e ENABLE_PREAIR_CHECK=1 \
       -e SONARR_URL=http://sonarr:8989 \
       -e SONARR_APIKEY=your_api_key \
+      -e ENABLE_RADARR_PREAIR_CHECK=1 \
+      -e RADARR_URL=http://radarr:7878 \
+      -e RADARR_APIKEY=your_radarr_api_key \
       -e ENABLE_ISO_CHECK=1 \
       -e LOG_LEVEL=INFO \
       ghcr.io/gengines/qbit-guard:latest
@@ -214,6 +228,9 @@ flowchart TD
     export ENABLE_PREAIR_CHECK=1
     export SONARR_URL=http://localhost:8989
     export SONARR_APIKEY=your_api_key
+    export ENABLE_RADARR_PREAIR_CHECK=1
+    export RADARR_URL=http://localhost:7878
+    export RADARR_APIKEY=your_radarr_api_key
     
     # Run the script
     python3 qbit_guard.py

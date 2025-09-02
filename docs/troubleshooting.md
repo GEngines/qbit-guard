@@ -198,6 +198,33 @@ docker-compose exec qbit-guard nslookup sonarr
 3. Verify Sonarr → qBittorrent connection is working
 4. Increase `SONARR_TIMEOUT_SEC` if Sonarr is slow to respond
 
+### Movie Pre-air Checking Issues
+
+**Symptoms**: Movies being incorrectly blocked or allowed despite release dates
+
+**Root Cause**: Radarr may have incomplete or inconsistent release date information
+
+**Debugging**:
+```bash
+# Check Radarr movie data directly
+curl "http://radarr:7878/api/v3/movie/[movie_id]?apikey=your_api_key"
+
+# Enable debug logging to see date checking logic
+docker-compose up -d -e LOG_LEVEL=DEBUG qbit-guard
+```
+
+**Solutions**:
+1. Ensure Radarr has accurate movie metadata
+2. Check multiple date fields in Radarr: `digitalRelease`, `physicalRelease`, `inCinemas`
+3. Verify `RADARR_PREAIR_CATEGORIES` matches torrent categories exactly
+4. Consider using Internet cross-verification: `INTERNET_CHECK_PROVIDER=tvdb`
+5. Adjust grace period if needed: `EARLY_GRACE_HOURS=12` for movies with uncertain dates
+
+**Common Movie Date Issues**:
+- **Missing digital release dates**: Some movies only have theatrical dates
+- **Regional variations**: Release dates vary by region  
+- **Streaming vs physical**: Different release windows for different formats
+
 ### Internet API Failures
 
 **Symptoms**: TVmaze or TheTVDB API errors
@@ -348,7 +375,8 @@ docker-compose logs qbit-guard | grep -E "(ERROR|Unhandled error|failed)"
 - ✅ `Watcher.*started` - Polling mode active
 
 **Expected Blocking Behavior**:
-- ⚠️ `Pre-air: BLOCK` - Expected pre-air blocking behavior
+- ⚠️ `Pre-air: BLOCK` - Expected TV pre-air blocking behavior
+- ⚠️ `Pre-air Movie: BLOCK` - Expected movie pre-air blocking behavior
 - ⚠️ `ISO cleanup: removing` - Expected ISO cleanup
 
 **Error Indicators**:

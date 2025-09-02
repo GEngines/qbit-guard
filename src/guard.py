@@ -156,6 +156,12 @@ class Config:
     sonarr_timeout_sec: int = int(os.getenv("SONARR_TIMEOUT_SEC", "45"))
     sonarr_retries: int = int(os.getenv("SONARR_RETRIES", "3"))
 
+    # Pre-air (Radarr/Movies)
+    enable_radarr_preair: bool = os.getenv("ENABLE_RADARR_PREAIR_CHECK", "0") == "1"
+    radarr_preair_categories: Set[str] = frozenset(
+        c.strip().lower() for c in os.getenv("RADARR_PREAIR_CATEGORIES", "radarr").split(",") if c.strip()
+    )
+
     # Internet cross-checks
     internet_check_provider: str = os.getenv("INTERNET_CHECK_PROVIDER", "tvmaze").strip().lower()  # off|tvmaze|tvdb|both
     tvmaze_base: str = os.getenv("TVMAZE_BASE", "https://api.tvmaze.com").rstrip("/")
@@ -555,6 +561,14 @@ class RadarrClient(BaseArr):
         else:
             log.info("Radarr: nothing to fail or in queue for downloadId=%s", download_id)
 
+    # Lightweight movie fetch (for pre-air)
+    def movie(self, movie_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            return self._get(f"/movie/{movie_id}")
+        except Exception as e:
+            log.warning("Radarr: movie %s fetch failed: %s", movie_id, e)
+            return None
+
 
 # --------------------------- Utilities ---------------------------
 
@@ -583,10 +597,11 @@ def domain_from_url(u: str) -> str:
 
 class InternetDates:
     """Optional TVmaze/TheTVDB cross-check to supplement Sonarr's airDateUtc."""
-    def __init__(self, cfg: Config, http: HttpClient, sonarr: SonarrClient):
+    def __init__(self, cfg: Config, http: HttpClient, sonarr: SonarrClient, radarr: RadarrClient):
         self.cfg = cfg
         self.http = http
         self.sonarr = sonarr
+        self.radarr = radarr
         self._tvdb_token = cfg.tvdb_bearer.strip()
 
     def _get(self, url: str, timeout: int) -> Any:
@@ -665,6 +680,73 @@ class InternetDates:
                 if not j.get("data"): break
         except Exception:
             return None
+        return None
+
+    # Movie lookups
+    def tvmaze_movie_release_date(self, movie: Dict[str, Any]) -> Optional[datetime.datetime]:
+        """Look up movie release date via TVmaze API using IMDB ID if available."""
+        imdb = movie.get("imdbId") or None
+        title = movie.get("title") or None
+        if not imdb and not title:
+            return None
+            
+        try:
+            # Try IMDB lookup first
+            if imdb and not str(imdb).startswith("tt"):
+                imdb = "tt" + str(imdb)
+            if imdb:
+                # TVmaze doesn't have great movie support, but we can try
+                # Note: TVmaze is primarily for TV shows, movie support is limited
+                pass
+                
+            # For now, TVmaze movie support is limited, so we return None
+            # In a real implementation, you might want to use a movie-specific API
+            return None
+        except Exception:
+            return None
+
+    def tvdb_movie_release_date(self, movie: Dict[str, Any]) -> Optional[datetime.datetime]:
+        """Look up movie release date via TVDB API using movie ID."""
+        tvdb_id = movie.get("tvdbId") or None
+        if not tvdb_id:
+            return None
+            
+        token = self._tvdb_login()
+        if not token:
+            return None
+            
+        try:
+            # TVDB v4 movie endpoint
+            url = f"{self.cfg.tvdb_base}/movies/{int(tvdb_id)}"
+            raw = self.http.get(url, headers={"Authorization": "Bearer " + token}, timeout=self.cfg.tvdb_timeout)
+            j = json.loads(raw.decode("utf-8")) if raw else {}
+            
+            movie_data = j.get("data") if isinstance(j, dict) else {}
+            if movie_data:
+                # Check various possible date fields
+                release_date = (movie_data.get("releaseDate") or 
+                              movie_data.get("firstAired") or 
+                              movie_data.get("year"))
+                
+                if release_date:
+                    # Handle different date formats
+                    if isinstance(release_date, str):
+                        if release_date.endswith("Z"):
+                            release_date = release_date[:-1] + "+00:00"
+                        if len(release_date) == 4 and release_date.isdigit():
+                            # Just a year, assume January 1st
+                            release_date += "-01-01T00:00:00+00:00"
+                        elif len(release_date) == 10 and release_date[4] == "-" and release_date[7] == "-":
+                            release_date += "T00:00:00+00:00"
+                        
+                        try:
+                            return datetime.datetime.fromisoformat(release_date)
+                        except Exception:
+                            pass
+                            
+        except Exception:
+            pass
+            
         return None
 
 
@@ -784,6 +866,107 @@ class PreAirGate:
             return True, reason, hist
 
         log.info("Pre-air: BLOCK (max_future=%.2f h)", max_future)
+        return False, "block", hist
+
+
+# --------------------------- Pre-Air Movie Gate ---------------------------
+
+class PreAirMovieGate:
+    """Implements the pre-air decision logic using Radarr (and optional internet cross-checks) for movies."""
+    def __init__(self, cfg: Config, radarr: RadarrClient, internet: InternetDates):
+        self.cfg = cfg
+        self.radarr = radarr
+        self.internet = internet
+
+    def should_apply(self, category_norm: str) -> bool:
+        return self.cfg.enable_radarr_preair and self.radarr.enabled and (category_norm in self.cfg.radarr_preair_categories)
+
+    def decision(self, qbit: QbitClient, h: str, tracker_hosts: Set[str]) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        """
+        Return (allow, reason, history_rows). 'allow' True means proceed to file check/start.
+        'reason' is textual for logs; 'history_rows' used for potential blocklist if blocked.
+        """
+        # Give Radarr a moment to write "Grabbed" history
+        time.sleep(0.8)
+
+        # Fetch history for this download
+        hist = []
+        for _ in range(5):
+            hist = self.radarr.history_for_download(h)
+            if hist: break
+            time.sleep(0.8)
+
+        movies = {int(r["movieId"]) for r in hist if r.get("movieId")}
+        rel_groups, indexers = set(), set()
+        for r in hist:
+            d = r.get("data") or {}
+            if d.get("releaseGroup"): rel_groups.add(str(d["releaseGroup"]).lower())
+            if d.get("indexer"): indexers.add(str(d["indexer"]).lower())
+
+        if not movies:
+            msg = "No Radarr history."
+            if self.cfg.resume_if_no_history:
+                log.info("Pre-air Movie: %s Proceeding to file check.", msg)
+                return True, "no-history", hist
+            log.info("Pre-air Movie: %s Keeping stopped.", msg)
+            return False, "no-history", hist
+
+        # Load movies and compute future hours from Radarr
+        future_hours: List[float] = []
+        movie_cache: Dict[int, Dict[str, Any]] = {}
+        for mid in movies:
+            movie = self.radarr.movie(mid) or {}
+            movie_cache[mid] = movie
+            
+            # Check various release date fields that Radarr might use
+            release_date = None
+            for field in ["digitalRelease", "physicalRelease", "inCinemas", "releaseDate"]:
+                date_str = movie.get(field)
+                if date_str:
+                    release_date = parse_iso_utc(date_str)
+                    break
+                    
+            if release_date and release_date > now_utc():
+                future_hours.append(hours_until(release_date))
+            elif release_date is None:
+                future_hours.append(99999.0)
+
+        all_released = len(future_hours) == 0
+        max_future = max(future_hours) if future_hours else 0.0
+
+        # Internet cross-checks for movies
+        if not all_released and self.cfg.internet_check_provider in ("tvdb","both"):
+            inet_future = []
+            for mid in movies:
+                movie = movie_cache[mid]
+                release_date = self.internet.tvdb_movie_release_date(movie)
+                if release_date and release_date > now_utc():
+                    inet_future.append(hours_until(release_date))
+                elif release_date is None:
+                    inet_future.append(99999.0)
+                    
+            if inet_future:
+                m = max(inet_future)
+                max_future = min(max_future, m) if max_future else m
+                all_released = False
+
+        # Whitelist/grace/hard-cap decisions (same logic as TV shows)
+        allow_by_grace = (not all_released) and (max_future <= self.cfg.early_grace_hours)
+        allow_by_group = bool(self.cfg.whitelist_groups and (rel_groups & self.cfg.whitelist_groups))
+        allow_by_indexer = bool(self.cfg.whitelist_indexers and (indexers & self.cfg.whitelist_indexers))
+        allow_by_tracker = bool(self.cfg.whitelist_trackers and any(any(w in h for w in self.cfg.whitelist_trackers) for h in tracker_hosts))
+        whitelist_allowed = allow_by_group or allow_by_indexer or allow_by_tracker
+
+        if (not all_released) and (max_future > self.cfg.early_hard_limit_hours) and (not (self.cfg.whitelist_overrides_hard_limit and whitelist_allowed)):
+            log.info("Pre-air Movie: BLOCK_CAP max_future=%.2f h", max_future)
+            return False, "cap", hist
+
+        if all_released or allow_by_grace or whitelist_allowed:
+            reason = "+".join([x for x,ok in [("released",all_released),("grace",allow_by_grace),("whitelist",whitelist_allowed)] if ok]) or "allow"
+            log.info("Pre-air Movie: ALLOW (%s)", reason)
+            return True, reason, hist
+
+        log.info("Pre-air Movie: BLOCK (max_future=%.2f h)", max_future)
         return False, "block", hist
 
 
@@ -991,8 +1174,9 @@ class TorrentGuard:
         self.qbit = QbitClient(cfg, self.http)
         self.sonarr = SonarrClient(cfg, self.http)
         self.radarr = RadarrClient(cfg, self.http)
-        self.internet = InternetDates(cfg, self.http, self.sonarr)
+        self.internet = InternetDates(cfg, self.http, self.sonarr, self.radarr)
         self.preair = PreAirGate(cfg, self.sonarr, self.internet)
+        self.preair_movie = PreAirMovieGate(cfg, self.radarr, self.internet)
         self.metadata = MetadataFetcher(cfg, self.qbit)
         self.iso = IsoCleaner(cfg, self.qbit, self.sonarr, self.radarr)
 
@@ -1027,8 +1211,12 @@ class TorrentGuard:
         trackers = self.qbit.trackers(torrent_hash) or []
         tracker_hosts = {domain_from_url(t.get("url","")) for t in trackers if t.get("url")}
 
-        # 1) PRE-AIR gate first
+        # 1) PRE-AIR gate first (TV shows and movies)
+        preair_applied = False
+        
+        # Check TV show pre-air gate
         if self.preair.should_apply(category_norm):
+            preair_applied = True
             allow, reason, history_rows = self.preair.decision(self.qbit, torrent_hash, tracker_hosts)
             if not allow:
                 if not self.cfg.dry_run:
@@ -1039,16 +1227,39 @@ class TorrentGuard:
                     self.qbit.add_tags(torrent_hash, "trash:preair")
                     try:
                         self.qbit.delete(torrent_hash, self.cfg.delete_files)
-                        log.info("Pre-air: deleted torrent %s (reason=%s).", torrent_hash, reason)
+                        log.info("Pre-air TV: deleted torrent %s (reason=%s).", torrent_hash, reason)
                     except Exception as e:
                         log.error("qB delete failed: %s", e)
                 else:
-                    log.info("DRY-RUN: would delete torrent %s due to pre-air (reason=%s).", torrent_hash, reason)
+                    log.info("DRY-RUN: would delete torrent %s due to TV pre-air (reason=%s).", torrent_hash, reason)
                 return
             else:
-                log.info("Pre-air passed (reason=%s). Proceeding to file/ISO/ext check.", reason)
-        else:
-            log.info("Pre-air gate not applicable for category '%s' or Sonarr disabled.", category)
+                log.info("Pre-air TV passed (reason=%s). Proceeding to file/ISO/ext check.", reason)
+        
+        # Check movie pre-air gate  
+        elif self.preair_movie.should_apply(category_norm):
+            preair_applied = True
+            allow, reason, history_rows = self.preair_movie.decision(self.qbit, torrent_hash, tracker_hosts)
+            if not allow:
+                if not self.cfg.dry_run:
+                    try:
+                        self.radarr.blocklist_download(torrent_hash)
+                    except Exception as e:
+                        log.error("Radarr blocklist error: %s", e)
+                    self.qbit.add_tags(torrent_hash, "trash:preair-movie")
+                    try:
+                        self.qbit.delete(torrent_hash, self.cfg.delete_files)
+                        log.info("Pre-air Movie: deleted torrent %s (reason=%s).", torrent_hash, reason)
+                    except Exception as e:
+                        log.error("qB delete failed: %s", e)
+                else:
+                    log.info("DRY-RUN: would delete torrent %s due to movie pre-air (reason=%s).", torrent_hash, reason)
+                return
+            else:
+                log.info("Pre-air Movie passed (reason=%s). Proceeding to file/ISO/ext check.", reason)
+        
+        if not preair_applied:
+            log.info("Pre-air gate not applicable for category '%s' or Sonarr/Radarr disabled.", category)
 
         # 2) Metadata + ISO/Extension policy cleaner
         if self.cfg.enable_iso_check:

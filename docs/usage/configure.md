@@ -61,18 +61,35 @@ RESUME_IF_NO_HISTORY=1                        # Proceed if Sonarr history not fo
 
 ---
 
-## Radarr Integration (ISO Blocklisting)
+## Radarr Integration (Pre-air Gate & ISO Blocklisting)
 
-Configure Radarr integration for movie ISO cleanup:
+Configure Radarr integration for both movie pre-air checking and ISO cleanup:
 
 ```bash
-# Radarr connection (for movie ISO cleanup)
+# Radarr connection
 RADARR_URL=http://radarr:7878
 RADARR_APIKEY=your_radarr_api_key_here
+
+# Pre-air checking for movies (new feature)
+ENABLE_RADARR_PREAIR_CHECK=1                 # Enable pre-air checking for movies
+RADARR_PREAIR_CATEGORIES="radarr"            # Categories to apply pre-air checks to
+
+# ISO cleanup (existing feature)
 RADARR_CATEGORIES="radarr"                   # Categories to apply Radarr blocklisting to
 ```
 
-This integration ensures that ISO files deleted by qbit-guard are also blocklisted in Radarr to prevent re-downloading.
+### How Movie Pre-air Checking Works
+
+Similar to TV show pre-air checking, but for movies:
+
+1. **Grace Period**: Allows releases within `EARLY_GRACE_HOURS` of release date (default: 6h)
+2. **Hard Limit**: Blocks releases more than `EARLY_HARD_LIMIT_HOURS` early (default: 72h)
+3. **Whitelists**: Trusted groups/indexers/trackers can bypass timing restrictions
+4. **Blocklisting**: Blocked releases are automatically blocklisted in Radarr before deletion
+
+The system checks multiple release date fields from Radarr including `digitalRelease`, `physicalRelease`, `inCinemas`, and `releaseDate`.
+
+This integration ensures that both ISO files deleted by qbit-guard and unreleased movies are also blocklisted in Radarr to prevent re-downloading.
 
 ---
 
@@ -253,7 +270,7 @@ QBIT_USER=admin
 QBIT_PASS=your_password
 QBIT_ALLOWED_CATEGORIES=tv-sonarr,radarr
 
-# Sonarr pre-air checking
+# Sonarr pre-air checking (TV shows)
 ENABLE_PREAIR_CHECK=1
 SONARR_URL=http://sonarr:8989
 SONARR_APIKEY=your_sonarr_api_key
@@ -261,13 +278,16 @@ EARLY_GRACE_HOURS=6
 EARLY_HARD_LIMIT_HOURS=72
 EARLY_WHITELIST_GROUPS=trusted_group1,trusted_group2
 
+# Radarr pre-air checking (Movies)
+ENABLE_RADARR_PREAIR_CHECK=1
+RADARR_URL=http://radarr:7878
+RADARR_APIKEY=your_radarr_api_key
+
 # Internet verification
 INTERNET_CHECK_PROVIDER=tvmaze
 
 # ISO cleanup
 ENABLE_ISO_CHECK=1
-RADARR_URL=http://radarr:7878
-RADARR_APIKEY=your_radarr_api_key
 
 LOG_LEVEL=DEBUG
 ```
