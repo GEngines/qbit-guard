@@ -156,8 +156,7 @@ class Config:
     sonarr_timeout_sec: int = int(os.getenv("SONARR_TIMEOUT_SEC", "45"))
     sonarr_retries: int = int(os.getenv("SONARR_RETRIES", "3"))
 
-    # Pre-air (Radarr/Movies)
-    enable_radarr_preair: bool = os.getenv("ENABLE_RADARR_PREAIR_CHECK", "0") == "1"
+    # Pre-air (Radarr/Movies) - uses the same enable_preair flag as Sonarr
     radarr_preair_categories: Set[str] = frozenset(
         c.strip().lower() for c in os.getenv("RADARR_PREAIR_CATEGORIES", "radarr").split(",") if c.strip()
     )
@@ -879,7 +878,7 @@ class PreAirMovieGate:
         self.internet = internet
 
     def should_apply(self, category_norm: str) -> bool:
-        return self.cfg.enable_radarr_preair and self.radarr.enabled and (category_norm in self.cfg.radarr_preair_categories)
+        return self.cfg.enable_preair and self.radarr.enabled and (category_norm in self.cfg.radarr_preair_categories)
 
     def decision(self, qbit: QbitClient, h: str, tracker_hosts: Set[str]) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """

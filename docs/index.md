@@ -181,7 +181,7 @@ flowchart TD
           - ENABLE_PREAIR_CHECK=1
           - SONARR_URL=http://sonarr:8989
           - SONARR_APIKEY=your_api_key
-          - ENABLE_RADARR_PREAIR_CHECK=1
+          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key
           - ENABLE_ISO_CHECK=1
@@ -206,7 +206,7 @@ flowchart TD
       -e ENABLE_PREAIR_CHECK=1 \
       -e SONARR_URL=http://sonarr:8989 \
       -e SONARR_APIKEY=your_api_key \
-      -e ENABLE_RADARR_PREAIR_CHECK=1 \
+      -e # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows) \
       -e RADARR_URL=http://radarr:7878 \
       -e RADARR_APIKEY=your_radarr_api_key \
       -e ENABLE_ISO_CHECK=1 \
@@ -228,7 +228,7 @@ flowchart TD
     export ENABLE_PREAIR_CHECK=1
     export SONARR_URL=http://localhost:8989
     export SONARR_APIKEY=your_api_key
-    export ENABLE_RADARR_PREAIR_CHECK=1
+    export # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
     export RADARR_URL=http://localhost:7878
     export RADARR_APIKEY=your_radarr_api_key
     

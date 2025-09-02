@@ -34,7 +34,7 @@ This page provides working examples of qbit-guard configurations for different d
           - SONARR_APIKEY=your_sonarr_api_key_here
           
           # Pre-air checking with Radarr (for movies)
-          - ENABLE_RADARR_PREAIR_CHECK=1
+          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key_here
           
@@ -82,7 +82,7 @@ This page provides working examples of qbit-guard configurations for different d
           - WHITELIST_OVERRIDES_HARD_LIMIT=1
           
           # Pre-air checking with Radarr (for movies)
-          - ENABLE_RADARR_PREAIR_CHECK=1
+          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key_here
           - RADARR_PREAIR_CATEGORIES=radarr
@@ -156,7 +156,7 @@ This page provides working examples of qbit-guard configurations for different d
           
           # Enable all checks
           - ENABLE_PREAIR_CHECK=1
-          - ENABLE_RADARR_PREAIR_CHECK=1
+          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
           - ENABLE_ISO_CHECK=1
           - SONARR_URL=http://sonarr:8989
           - SONARR_APIKEY=your_sonarr_api_key_here
@@ -224,7 +224,7 @@ This page provides working examples of qbit-guard configurations for different d
       - QBIT_ALLOWED_CATEGORIES=radarr
       
       # Movie pre-air checking with Radarr
-      - ENABLE_RADARR_PREAIR_CHECK=1
+      - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
       - RADARR_URL=http://radarr:7878
       - RADARR_APIKEY=your_radarr_api_key_here
       - RADARR_PREAIR_CATEGORIES=radarr
@@ -282,7 +282,7 @@ This page provides working examples of qbit-guard configurations for different d
       
       # Enable features for testing
       - ENABLE_PREAIR_CHECK=1
-      - ENABLE_RADARR_PREAIR_CHECK=1
+      - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
       - ENABLE_ISO_CHECK=1
       - SONARR_URL=http://sonarr:8989
       - SONARR_APIKEY=your_sonarr_api_key_here

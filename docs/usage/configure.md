@@ -70,8 +70,8 @@ Configure Radarr integration for both movie pre-air checking and ISO cleanup:
 RADARR_URL=http://radarr:7878
 RADARR_APIKEY=your_radarr_api_key_here
 
-# Pre-air checking for movies (new feature)
-ENABLE_RADARR_PREAIR_CHECK=1                 # Enable pre-air checking for movies
+# Pre-air checking for movies uses the same flag as TV shows
+ENABLE_PREAIR_CHECK=1                         # Enable pre-air checking for both TV and movies
 RADARR_PREAIR_CATEGORIES="radarr"            # Categories to apply pre-air checks to
 
 # ISO cleanup (existing feature)
@@ -279,7 +279,7 @@ EARLY_HARD_LIMIT_HOURS=72
 EARLY_WHITELIST_GROUPS=trusted_group1,trusted_group2
 
 # Radarr pre-air checking (Movies)
-ENABLE_RADARR_PREAIR_CHECK=1
+ENABLE_PREAIR_CHECK=1                        # Enable pre-air checking for both TV and movies
 RADARR_URL=http://radarr:7878
 RADARR_APIKEY=your_radarr_api_key
 
