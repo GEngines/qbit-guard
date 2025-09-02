@@ -1214,7 +1214,16 @@ class TorrentGuard:
         preair_applied = False
         
         # Check TV show pre-air gate
-        if self.preair.should_apply(category_norm):
+        tv_should_apply = self.preair.should_apply(category_norm)
+        movie_should_apply = self.preair_movie.should_apply(category_norm)
+        
+        # Validate configuration: categories should not overlap between services when both are enabled
+        if tv_should_apply and movie_should_apply:
+            log.warning("Category '%s' matches both Sonarr (%s) and Radarr (%s) pre-air categories. "
+                       "This may lead to unexpected behavior. Consider using distinct categories.",
+                       category, sorted(self.cfg.sonarr_categories), sorted(self.cfg.radarr_preair_categories))
+        
+        if tv_should_apply:
             preair_applied = True
             allow, reason, history_rows = self.preair.decision(self.qbit, torrent_hash, tracker_hosts)
             if not allow:
@@ -1235,8 +1244,8 @@ class TorrentGuard:
             else:
                 log.info("Pre-air TV passed (reason=%s). Proceeding to file/ISO/ext check.", reason)
         
-        # Check movie pre-air gate  
-        elif self.preair_movie.should_apply(category_norm):
+        # Check movie pre-air gate (independent of TV check)
+        if movie_should_apply:
             preair_applied = True
             allow, reason, history_rows = self.preair_movie.decision(self.qbit, torrent_hash, tracker_hosts)
             if not allow:
@@ -1258,7 +1267,7 @@ class TorrentGuard:
                 log.info("Pre-air Movie passed (reason=%s). Proceeding to file/ISO/ext check.", reason)
         
         if not preair_applied:
-            log.info("Pre-air gate not applicable for category '%s' or Sonarr/Radarr disabled.", category)
+            log.info("Pre-air gate not applicable for category '%s' or services disabled.", category)
 
         # 2) Metadata + ISO/Extension policy cleaner
         if self.cfg.enable_iso_check:
