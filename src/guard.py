@@ -156,10 +156,7 @@ class Config:
     sonarr_timeout_sec: int = int(os.getenv("SONARR_TIMEOUT_SEC", "45"))
     sonarr_retries: int = int(os.getenv("SONARR_RETRIES", "3"))
 
-    # Pre-air (Radarr/Movies) - uses the same enable_preair flag as Sonarr
-    radarr_preair_categories: Set[str] = frozenset(
-        c.strip().lower() for c in os.getenv("RADARR_PREAIR_CATEGORIES", "radarr").split(",") if c.strip()
-    )
+
 
     # Internet cross-checks
     internet_check_provider: str = os.getenv("INTERNET_CHECK_PROVIDER", "tvmaze").strip().lower()  # off|tvmaze|tvdb|both
@@ -878,7 +875,7 @@ class PreAirMovieGate:
         self.internet = internet
 
     def should_apply(self, category_norm: str) -> bool:
-        return self.cfg.enable_preair and self.radarr.enabled and (category_norm in self.cfg.radarr_preair_categories)
+        return self.cfg.enable_preair and self.radarr.enabled and (category_norm in self.cfg.radarr_categories)
 
     def decision(self, qbit: QbitClient, h: str, tracker_hosts: Set[str]) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """
@@ -1221,7 +1218,7 @@ class TorrentGuard:
         if tv_should_apply and movie_should_apply:
             log.warning("Category '%s' matches both Sonarr (%s) and Radarr (%s) pre-air categories. "
                        "This may lead to unexpected behavior. Consider using distinct categories.",
-                       category, sorted(self.cfg.sonarr_categories), sorted(self.cfg.radarr_preair_categories))
+                       category, sorted(self.cfg.sonarr_categories), sorted(self.cfg.radarr_categories))
         
         if tv_should_apply:
             preair_applied = True
