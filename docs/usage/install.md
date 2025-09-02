@@ -72,6 +72,48 @@ The containerized version runs as a standalone service that continuously monitor
 
 For most users, polling mode is simpler and more reliable.
 
+### UNRAID Deployment
+
+For UNRAID users, qbit-guard is available through the Community Applications plugin, making installation even easier:
+
+#### Option 1: Official qbit-guard Container
+
+1. **Install via Community Applications**:
+   - Open the UNRAID web interface
+   - Navigate to **Apps** tab  
+   - Search for **"qbit-guard"**
+   - Click **Install** on the official qbit-guard container
+
+2. **Configure the container**:
+   - **Repository**: `ghcr.io/gengines/qbit-guard:latest`
+   - **Network Type**: `bridge` (or your preferred network)
+   - **Environment Variables**: Configure as needed (see [Environment Variables](env.md))
+
+#### Option 2: binhex's qbit-guard Container
+
+As an alternative, you can use binhex's version which uses the same underlying image:
+
+1. **Install via Community Applications**:
+   - Open the UNRAID web interface  
+   - Navigate to **Apps** tab
+   - Search for **"binhex-qbit-guard"**
+   - Click **Install** on binhex's qbit-guard container
+
+2. **Configure the container**:
+   - Uses the same `ghcr.io/gengines/qbit-guard` image
+   - May have pre-configured UNRAID-specific settings
+   - Environment variables work identically
+
+#### UNRAID-Specific Benefits
+
+- **GUI Configuration**: UNRAID's template system provides a user-friendly interface for all environment variables
+- **Integration**: Seamlessly integrates with other UNRAID containers (qBittorrent, Sonarr, Radarr)
+- **Docker Management**: Built-in container management, logging, and monitoring
+- **Network Isolation**: Easy network configuration and container communication
+- **Auto-updates**: Automatic container updates when new versions are released
+
+Both containers use the same official image and provide identical functionality - choose whichever fits your preference or existing UNRAID setup.
+
 ### Windows-Specific Considerations
 
 When running Docker containers on Windows, consider these additional points:

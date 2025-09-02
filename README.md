@@ -17,6 +17,7 @@ Please visit our GitHub Pages site for comprehensive documentation including:
 
 - **Documentation:** https://gengines.github.io/qbit-guard/
 - **Docker Image:** `ghcr.io/gengines/qbit-guard:<tag>`
+- **UNRAID:** Available in Community Applications as "qbit-guard" (or via binhex's version)
 - **Repository:** https://github.com/GEngines/qbit-guard
 
 ## Key Features
