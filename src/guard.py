@@ -26,7 +26,6 @@ import urllib.request as ureq
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 
-import urllib
 from version import VERSION
 # --------------------------- Logging ---------------------------
 
