@@ -54,6 +54,8 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 |----------|---------|-------------|
 | `RADARR_URL` | `http://127.0.0.1:7878` | Radarr base URL |
 | `RADARR_APIKEY` | - | Radarr API key |
+| `ENABLE_RADARR_PREAIR_CHECK` | `0` | Enable pre-air checking for movies (`0` or `1`) |
+| `RADARR_PREAIR_CATEGORIES` | `radarr` | Categories to apply movie pre-air checks to |
 | `RADARR_CATEGORIES` | `radarr` | Categories to apply Radarr blocklisting to |
 | `RADARR_TIMEOUT_SEC` | `45` | HTTP timeout for Radarr API calls |
 | `RADARR_RETRIES` | `3` | Retry attempts for Radarr operations |
