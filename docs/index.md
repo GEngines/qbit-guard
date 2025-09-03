@@ -236,6 +236,29 @@ flowchart TD
       ghcr.io/gengines/qbit-guard:latest
     ```
 
+=== "UNRAID (Easy Setup)"
+
+    **For UNRAID users - GUI-based configuration**
+
+    1. **Install via Community Applications**:
+        - Open UNRAID web interface
+        - Navigate to **Apps** tab
+        - Search for **"qbit-guard"**
+        - Click **Install**
+
+    2. **Configure through GUI**:
+        - **Repository**: `ghcr.io/gengines/qbit-guard:latest`
+        - **Network**: Select your Docker network
+        - **Environment Variables** (configure via UNRAID template):
+            - `QBIT_HOST=http://qbittorrent:8080`
+            - `QBIT_PASS=your_password`
+            - `SONARR_APIKEY=your_api_key` 
+            - `RADARR_APIKEY=your_radarr_api_key`
+            - `TMDB_APIKEY=your_tmdb_api_key` (optional)
+
+    !!! success "UNRAID Benefits"
+        User-friendly GUI configuration, automatic container management, and seamless integration with other UNRAID apps.
+
 === "Python Script"
 
     ```bash
