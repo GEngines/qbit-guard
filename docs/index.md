@@ -75,8 +75,9 @@ A zero-dependency Python guard for qBittorrent that provides intelligent torrent
 
     **Optional internet verification**
     
-    - TVmaze and/or TheTVDB integration
+    - TVmaze, TheTVDB, and/or TMDB integration
     - Cross-checks Sonarr air dates and movie release dates
+    - TMDB provides authoritative digital/physical release dates for movies
     - Improves accuracy of pre-air filtering for both TV and movies
     - No API keys required for TVmaze
 
@@ -98,6 +99,15 @@ A zero-dependency Python guard for qBittorrent that provides intelligent torrent
     - Structured JSON logging to stdout
     - Minimal resource usage
 
+=== "Selective File Control"
+
+    **Advanced file management**
+    
+    - Selective file unchecking instead of full torrent deletion
+    - Preserves wanted files while blocking unwanted extensions
+    - Configurable partial download behavior
+    - Tagged torrents for easy identification (`guard:partial`)
+
 ---
 
 ## :gear: How it Works
@@ -111,19 +121,28 @@ flowchart TD
     D -->|TV Show Category| E[Check Sonarr API]
     D -->|Movie Category| F[Check Radarr API]  
     D -->|Not Pre-air Category| G[Get Metadata]
-    E --> H{TV Air Date Check}
-    F --> I{Movie Release Date Check}
+    E --> E2[Optional: TVmaze/TVDB Check]
+    F --> F2[Optional: TMDB Check]
+    E2 --> H{TV Air Date Check}
+    F2 --> I{Movie Release Date Check}
     H -->|Too Early| J[Blocklist & Delete TV]
     I -->|Too Early| K[Blocklist & Delete Movie]
     H -->|Allowed| G[Get Metadata]
     I -->|Allowed| G[Get Metadata]
-    G --> L{ISO/BDMV Check}
-    L -->|Disc Image Only| M[Blocklist & Delete]
-    L -->|Has Video| N[Tag: guard:allowed & Start]
-    J --> O[Tag: trash:preair]
-    K --> P[Tag: trash:preair-movie]
-    M --> Q[Tag: trash:iso]
-    N --> R[Active Download]
+    G --> L{Extension Policy}
+    L -->|All Files Blocked| M[Blocklist & Delete]
+    L -->|Some Files Blocked| N{Uncheck Blocked Files?}
+    L -->|No Files Blocked| O{ISO/BDMV Check}
+    N -->|Yes| P[Uncheck Files & Tag: guard:partial]
+    N -->|No| M
+    P --> O
+    O -->|Disc Image Only| Q[Blocklist & Delete]
+    O -->|Has Video| R[Tag: guard:allowed & Start]
+    J --> S[Tag: trash:preair]
+    K --> T[Tag: trash:preair-movie]
+    M --> U[Tag: trash:ext]
+    Q --> V[Tag: trash:iso]
+    R --> W[Active Download]
 ```
 
 !!! info "Flow Steps"
@@ -131,7 +150,7 @@ flowchart TD
     2. **Category filter** → only `QBIT_ALLOWED_CATEGORIES` are processed  
     3. **Pre-air gate**: 
         - **TV Shows** (if Sonarr category): consult Sonarr (+ optional TVmaze/TVDB)
-        - **Movies** (if Radarr category): consult Radarr for release dates
+        - **Movies** (if Radarr category): consult Radarr for release dates (+ optional TMDB cross-check)
         - If **blocked** → blocklist in *arr, tag `trash:preair` or `trash:preair-movie`, delete torrent
         - If **allowed** → continue
     4. **Metadata fetch** → briefly start torrent to get file list, respect wait/budget limits, then stop
@@ -158,6 +177,7 @@ flowchart TD
 | **Python** | 3.8+ | Script mode only | :material-minus: Optional |
 | **Sonarr** | v3+ | TV pre-air checking | :material-minus: Optional |
 | **Radarr** | v3+ | Movie pre-air checking & ISO blocklisting | :material-minus: Optional |
+| **TMDB API** | - | Movie release date verification | :material-minus: Optional |
 | **Network** | - | Service connectivity | :material-check: Required |
 
 ---
@@ -184,6 +204,7 @@ flowchart TD
           - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key
+          - TMDB_APIKEY=your_tmdb_api_key  # Optional: for enhanced movie release date accuracy
           - ENABLE_ISO_CHECK=1
           - LOG_LEVEL=INFO
         networks: [arr-network]
@@ -209,6 +230,7 @@ flowchart TD
       -e # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows) \
       -e RADARR_URL=http://radarr:7878 \
       -e RADARR_APIKEY=your_radarr_api_key \
+      -e TMDB_APIKEY=your_tmdb_api_key \  # Optional: for enhanced movie release date accuracy
       -e ENABLE_ISO_CHECK=1 \
       -e LOG_LEVEL=INFO \
       ghcr.io/gengines/qbit-guard:latest
@@ -231,6 +253,7 @@ flowchart TD
     export # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
     export RADARR_URL=http://localhost:7878
     export RADARR_APIKEY=your_radarr_api_key
+    export TMDB_APIKEY=your_tmdb_api_key  # Optional: for enhanced movie release date accuracy
     
     # Run the script
     python3 qbit_guard.py
