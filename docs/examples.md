@@ -34,9 +34,10 @@ This page provides working examples of qbit-guard configurations for different d
           - SONARR_APIKEY=your_sonarr_api_key_here
           
           # Pre-air checking with Radarr (for movies)
-          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
+          - ENABLE_PREAIR_CHECK=1
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key_here
+          - TMDB_APIKEY=your_tmdb_api_key_here  # Optional: Enhanced movie release date accuracy
           
           # ISO cleanup
           - ENABLE_ISO_CHECK=1
@@ -82,10 +83,11 @@ This page provides working examples of qbit-guard configurations for different d
           - WHITELIST_OVERRIDES_HARD_LIMIT=1
           
           # Pre-air checking with Radarr (for movies)
-          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
+          - ENABLE_PREAIR_CHECK=1
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key_here
           - RADARR_PREAIR_CATEGORIES=radarr
+          - TMDB_APIKEY=your_tmdb_api_key_here  # Enhanced movie release date accuracy
           
           # Internet cross-verification
           - INTERNET_CHECK_PROVIDER=both
@@ -156,12 +158,12 @@ This page provides working examples of qbit-guard configurations for different d
           
           # Enable all checks
           - ENABLE_PREAIR_CHECK=1
-          - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
           - ENABLE_ISO_CHECK=1
           - SONARR_URL=http://sonarr:8989
           - SONARR_APIKEY=your_sonarr_api_key_here
           - RADARR_URL=http://radarr:7878
           - RADARR_APIKEY=your_radarr_api_key_here
+          - TMDB_APIKEY=your_tmdb_api_key_here  # Optional: Enhanced movie release date accuracy
           
           - LOG_LEVEL=INFO
         networks: [arr-network]
@@ -223,16 +225,17 @@ This page provides working examples of qbit-guard configurations for different d
       - QBIT_PASS=your_password_here
       - QBIT_ALLOWED_CATEGORIES=radarr
       
-      # Movie pre-air checking with Radarr
-      - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
+      # Movie pre-air checking with Radarr and TMDB
+      - ENABLE_PREAIR_CHECK=1
       - RADARR_URL=http://radarr:7878
       - RADARR_APIKEY=your_radarr_api_key_here
       - RADARR_PREAIR_CATEGORIES=radarr
+      - TMDB_APIKEY=your_tmdb_api_key_here  # Primary source for movie release dates
       - EARLY_GRACE_HOURS=6
       - EARLY_HARD_LIMIT_HOURS=72
       
-      # Disable TV pre-air checking
-      - ENABLE_PREAIR_CHECK=0
+      # Disable Sonarr integration (movies only)
+      # ENABLE_PREAIR_CHECK=1 still applies to movies via Radarr categories
       
       # Enable ISO cleanup for movie disc images
       - ENABLE_ISO_CHECK=1
@@ -248,6 +251,80 @@ This page provides working examples of qbit-guard configurations for different d
 
     !!! tip "Movie Focus"
         Optimized for movie downloads with pre-air checking, ISO cleanup and strict file type filtering.
+
+=== "Movies Only with TMDB"
+
+    **Enhanced movie configuration with TMDB integration**
+
+    ```yaml
+    environment:
+      - QBIT_HOST=http://qbittorrent:8080
+      - QBIT_USER=admin
+      - QBIT_PASS=your_password_here
+      - QBIT_ALLOWED_CATEGORIES=radarr
+      
+      # Movie pre-air checking with TMDB as primary source
+      - ENABLE_PREAIR_CHECK=1
+      - RADARR_URL=http://radarr:7878
+      - RADARR_APIKEY=your_radarr_api_key_here
+      - RADARR_PREAIR_CATEGORIES=radarr
+      - TMDB_APIKEY=your_tmdb_api_key_here  # Primary: digital/physical release dates
+      
+      # Optional: Additional cross-verification
+      - INTERNET_CHECK_PROVIDER=both
+      - TVDB_APIKEY=your_tvdb_api_key_here
+      
+      # Movie-optimized grace periods
+      - EARLY_GRACE_HOURS=12  # Longer grace for movie releases
+      - EARLY_HARD_LIMIT_HOURS=168  # 1 week maximum
+      
+      # Enable ISO cleanup for movie disc images
+      - ENABLE_ISO_CHECK=1
+      - MIN_KEEPABLE_VIDEO_MB=100
+      
+      # Enhanced logging for release date verification
+      - LOG_LEVEL=DETAILED
+    ```
+
+    !!! success "TMDB Integration"
+        TMDB provides authoritative digital and physical release dates, significantly improving movie pre-air accuracy compared to Radarr metadata alone.
+
+=== "Selective File Control"
+
+    **Advanced file management with selective unchecking**
+
+    ```yaml
+    environment:
+      - QBIT_HOST=http://qbittorrent:8080
+      - QBIT_USER=admin
+      - QBIT_PASS=your_password_here
+      - QBIT_ALLOWED_CATEGORIES=tv-sonarr,radarr
+      
+      # Enable selective file unchecking (default behavior)
+      - GUARD_UNCHECK_BLOCKED_FILES=1
+      
+      # Use allowlist strategy for precise control
+      - GUARD_EXT_STRATEGY=allow
+      - GUARD_ALLOWED_EXTS=mkv,mp4,m4v,avi,ts,m2ts,mov,webm,srt,ass,sub,idx
+      
+      # Only delete torrent if ALL files are blocked
+      - GUARD_EXT_DELETE_IF_ALL_BLOCKED=1
+      - GUARD_EXT_DELETE_IF_ANY_BLOCKED=0
+      
+      # Enhanced logging to see what's being unchecked
+      - LOG_LEVEL=DETAILED
+      
+      # Standard integrations
+      - ENABLE_PREAIR_CHECK=1
+      - SONARR_URL=http://sonarr:8989
+      - SONARR_APIKEY=your_sonarr_api_key_here
+      - RADARR_URL=http://radarr:7878
+      - RADARR_APIKEY=your_radarr_api_key_here
+      - ENABLE_ISO_CHECK=1
+    ```
+
+    !!! info "Selective Behavior"
+        With these settings, torrents with mixed content will have unwanted files unchecked (priority 0) while keeping wanted files. Torrents are tagged with `guard:partial` for identification.
 
 === "Testing & Development"
 
@@ -282,12 +359,12 @@ This page provides working examples of qbit-guard configurations for different d
       
       # Enable features for testing
       - ENABLE_PREAIR_CHECK=1
-      - # Pre-air checking for movies now uses ENABLE_PREAIR_CHECK (same as TV shows)
       - ENABLE_ISO_CHECK=1
       - SONARR_URL=http://sonarr:8989
       - SONARR_APIKEY=your_sonarr_api_key_here
       - RADARR_URL=http://radarr:7878
       - RADARR_APIKEY=your_radarr_api_key_here
+      - TMDB_APIKEY=your_tmdb_api_key_here  # Optional: For testing movie release dates
     ```
 
     !!! danger "Dry Run Mode"
@@ -331,6 +408,7 @@ This page provides working examples of qbit-guard configurations for different d
       SONARR_APIKEY: "your_sonarr_api_key"
       RADARR_APIKEY: "your_radarr_api_key"
       TVDB_APIKEY: "your_tvdb_api_key"
+      TMDB_APIKEY: "your_tmdb_api_key"
     ```
 
 === "Deployment"

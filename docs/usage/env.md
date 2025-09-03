@@ -59,7 +59,14 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 | `RADARR_TIMEOUT_SEC` | `45` | HTTP timeout for Radarr API calls |
 | `RADARR_RETRIES` | `3` | Retry attempts for Radarr operations |
 
-**Note**: Movie pre-air checking is now controlled by the same `ENABLE_PREAIR_CHECK` flag used for TV shows.
+!!! info "Movie Pre-air Logic"
+    Movie pre-air checking uses orchestrated logic with fallbacks:
+    
+    1. **Primary**: TMDB API for digital/physical release dates (if `TMDB_APIKEY` is set)
+    2. **Fallback**: Radarr metadata (`digitalRelease`, `physicalRelease`, `inCinemas`, `releaseDate`)
+    3. **Cross-verification**: Optional TVDB integration for additional validation
+    
+    Movie pre-air checking is controlled by the same `ENABLE_PREAIR_CHECK` flag used for TV shows.
 
 ---
 
@@ -86,6 +93,16 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 | `TVDB_TIMEOUT_SEC` | `8` | HTTP timeout for TheTVDB API calls |
 | `TVDB_BEARER` | - | Reuse existing bearer token (optional) |
 
+### TMDB Integration
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TMDB_APIKEY` | - | TMDB (The Movie Database) API key for movie release date verification |
+| `TMDB_BASE` | `https://api.themoviedb.org/3` | TMDB API base URL |
+| `TMDB_TIMEOUT_SEC` | `8` | HTTP timeout for TMDB API calls |
+
+!!! tip "TMDB Benefits"
+    TMDB provides authoritative digital and physical release dates for movies, improving pre-air filtering accuracy. It serves as the primary source for movie release dates, with Radarr as fallback.
+
 ---
 
 ## ISO/BDMV Cleanup
@@ -110,8 +127,19 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 | `GUARD_EXT_DELETE_IF_ALL_BLOCKED` | `1` | Delete only if all files are disallowed (`0` or `1`) |
 | `GUARD_EXT_DELETE_IF_ANY_BLOCKED` | `0` | Delete if any file is disallowed (`0` or `1`) |
 | `GUARD_EXT_VIOLATION_TAG` | `trash:ext` | Tag applied to torrents deleted for extension violations |
+| `GUARD_UNCHECK_BLOCKED_FILES` | `1` | Uncheck blocked files instead of deleting entire torrent (`0` or `1`) |
 | `GUARD_DISC_EXTS` | `iso,img,mdf,nrg,cue,bin` | Disc image extensions |
 | `GUARD_EXTS_FILE` | - | Path to JSON config file (optional) |
+
+!!! tip "Selective File Control"
+    When `GUARD_UNCHECK_BLOCKED_FILES=1` (default), qbit-guard will:
+    
+    - **Uncheck** blocked files (set priority to 0) instead of deleting the entire torrent
+    - **Preserve** allowed files for download
+    - **Tag** the torrent with `guard:partial` to indicate partial processing
+    - **Continue** with the download of remaining allowed files
+    
+    This provides more granular control and prevents losing wanted content due to a few unwanted files.
 
 ---
 
@@ -121,6 +149,11 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 |----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `INFO`, `DETAILED`, or `DEBUG` |
 | `USER_AGENT` | `qbit-guard/2.0` | HTTP User-Agent string for API calls |
+
+!!! note "Logging Levels"
+    - **INFO**: Standard operational logs  
+    - **DETAILED**: Enhanced extension policy logging with file counts and examples
+    - **DEBUG**: Full debugging information including HTTP requests/responses
 
 ---
 
@@ -159,13 +192,19 @@ SONARR_URL=http://sonarr:8989
 SONARR_APIKEY=your_sonarr_api_key
 EARLY_WHITELIST_GROUPS=trusted_group1,trusted_group2
 
-# Radarr integration
+# Radarr integration with TMDB enhancement
 RADARR_URL=http://radarr:7878
 RADARR_APIKEY=your_radarr_api_key
+TMDB_APIKEY=your_tmdb_api_key  # Enhanced movie release date accuracy
+
+# Selective file control
+GUARD_UNCHECK_BLOCKED_FILES=1  # Default behavior
+GUARD_EXT_STRATEGY=allow
+GUARD_ALLOWED_EXTS=mkv,mp4,m4v,avi,ts,m2ts,mov,webm,srt,ass
 
 # Optional overrides
 MIN_KEEPABLE_VIDEO_MB=100
-LOG_LEVEL=DEBUG
+LOG_LEVEL=DETAILED  # Enhanced extension logging
 
 # Note: Many features enabled by default - ISO cleanup, pre-air checks, TVmaze verification
 ```
@@ -186,6 +225,53 @@ WATCH_PROCESS_EXISTING_AT_START=1
 # Metadata limits for large torrents
 METADATA_MAX_WAIT_SEC=300
 METADATA_DOWNLOAD_BUDGET_BYTES=104857600  # 100MB
+```
+
+### Selective File Control Example
+```bash
+# Enable selective file unchecking (default behavior)
+GUARD_UNCHECK_BLOCKED_FILES=1
+
+# Use allow strategy for precise control
+GUARD_EXT_STRATEGY=allow
+GUARD_ALLOWED_EXTS=mkv,mp4,m4v,avi,ts,m2ts,mov,webm,srt,ass,sub
+
+# Only delete if ALL files are blocked (not just some)
+GUARD_EXT_DELETE_IF_ALL_BLOCKED=1
+GUARD_EXT_DELETE_IF_ANY_BLOCKED=0
+
+# Enhanced logging to see what's being unchecked
+LOG_LEVEL=DETAILED
+
+# Connection settings
+QBIT_HOST=http://qbittorrent:8080
+QBIT_PASS=your_password
+QBIT_ALLOWED_CATEGORIES=tv-sonarr,radarr
+```
+
+### Movies with TMDB Integration Example
+```bash
+# Core connection
+QBIT_HOST=http://qbittorrent:8080
+QBIT_PASS=your_password
+QBIT_ALLOWED_CATEGORIES=radarr
+
+# Movie-focused pre-air checking with TMDB
+ENABLE_PREAIR_CHECK=1
+RADARR_URL=http://radarr:7878
+RADARR_APIKEY=your_radarr_api_key
+TMDB_APIKEY=your_tmdb_api_key  # Primary source for release dates
+
+# Enhanced grace periods for movies
+EARLY_GRACE_HOURS=12
+EARLY_HARD_LIMIT_HOURS=168  # 1 week
+
+# Optional: Additional verification
+INTERNET_CHECK_PROVIDER=both
+TVDB_APIKEY=your_tvdb_api_key
+
+# Log detailed release date checks
+LOG_LEVEL=DETAILED
 ```
 
 ---
