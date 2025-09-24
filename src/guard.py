@@ -1388,7 +1388,7 @@ class TorrentGuard:
         self.qbit.add_tags(torrent_hash, "guard:allowed")
         if not self.cfg.dry_run:
             self.qbit.start(torrent_hash)
-        log.info("Started torrent %s after checks.", torrent_hash)
+        log.info("Started torrent %s (%s) after checks.", torrent_hash, name)
 
 
 # --------------------------- Main ---------------------------
