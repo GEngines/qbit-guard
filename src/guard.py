@@ -50,7 +50,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 log = logging.getLogger("qbit-guard")
-log.info(f"qbit-guard starting - version: {VERSION}")
+log.info("qbit-guard version %s starting (log level %s)", VERSION, LOG_LEVEL)
 
 # --------------------------- Helpers (extensions) ---------------------------
 
@@ -342,9 +342,10 @@ class QbitClient:
     def login(self) -> None:
         """Authenticate with qBittorrent."""
         # NOTE: If you hit 403s, add CSRF headers in HttpClient (Referer/Origin) or adjust qB settings.
+        log.info("Attempting qBittorrent login at %s", self.cfg.qbit_host)
         self.http.post_form(self._url("/api/v2/auth/login"),
                             {"username": self.cfg.qbit_user, "password": self.cfg.qbit_pass})
-        log.info("qB: login OK")
+        log.info("Successfully authenticated with qBittorrent")
 
     def get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = self._url(path)
@@ -379,14 +380,14 @@ class QbitClient:
     def reannounce(self, h: str) -> None:
         try:
             self.post("/api/v2/torrents/reannounce", {"hashes": h})
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Failed to reannounce torrent %s: %s", h, e)
 
     def add_tags(self, h: str, tags: str) -> None:
         try:
             self.post("/api/v2/torrents/addTags", {"hashes": h, "tags": tags})
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Failed to add tags '%s' to torrent %s: %s", tags, h, e)
 
     def info(self, h: str) -> Optional[Dict[str, Any]]:
         arr = self.get_json("/api/v2/torrents/info", {"hashes": h}) or []
@@ -404,7 +405,7 @@ class QbitClient:
             id_str = "|".join(str(i) for i in file_ids)
             self.post("/api/v2/torrents/filePrio", {"hash": h, "id": id_str, "priority": str(priority)})
         except Exception as e:
-            log.warning("qB: could not set file priority for %s: %s", h, e)
+            log.warning("Failed to set file priority for torrent %s: %s", h, e)
 
 
 # --------------------------- Sonarr / Radarr ---------------------------
@@ -438,6 +439,7 @@ class BaseArr:
                 return
             except Exception as e:
                 last = e
+                log.warning("API request failed (attempt %d/%d): %s", a + 1, self.retries, str(e).split('\n')[0][:100])
                 time.sleep(min(2**a, 8))
         raise last
     
@@ -460,6 +462,7 @@ class BaseArr:
                     return None if not raw else json.loads(raw.decode("utf-8"))
             except Exception as e:
                 last = e
+                log.warning("API PUT request failed (attempt %d/%d): %s", a + 1, self.retries, str(e).split('\n')[0][:100])
                 time.sleep(min(2 ** a, 8))
         raise last
 
@@ -474,14 +477,14 @@ class BaseArr:
             obj = self._get("/history", {"downloadId": download_id})
             recs = obj.get("records", obj) if isinstance(obj, dict) else obj
             if recs: return recs
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Failed to get history %s", e)
         try:
             obj = self._get("/history", {"page":1,"pageSize":200,"sortKey":"date","sortDirection":"descending"})
             recs = obj.get("records", []) if isinstance(obj, dict) else (obj or [])
             return [r for r in recs if (r.get("downloadId","").lower() == download_id.lower())]
-        except Exception:
-            return []
+        except Exception as e:
+            log.warning("Failed to get history %s", e)
 
     def queue_ids_for_download(self, download_id: str) -> List[int]:
         """Return queue row IDs for a given downloadId (used for queue failover blocklist)."""
@@ -489,8 +492,8 @@ class BaseArr:
             obj = self._get("/queue", {"page":1,"pageSize":500,"sortKey":"timeleft","sortDirection":"ascending"})
             recs = obj.get("records", obj) if isinstance(obj, dict) else obj
             return [int(r["id"]) for r in (recs or []) if r.get("id") and r.get("downloadId","").lower()==download_id.lower()]
-        except Exception:
-            return []
+        except Exception as e:
+            log.warning("Failed to get queue %s", e)
 
     @staticmethod
     def dedup_grabbed_ids(history_rows: Sequence[Dict[str, Any]]) -> List[int]:
@@ -1038,7 +1041,7 @@ class PreAirMovieGate:
             for mid in movies:
                 movie = movie_cache[mid]
                 
-                release_date = self.internet.tvdb_movie_release_date(movie)
+                release_date = self.internet.tvmaze_movie_release_date(movie)
                 if release_date and release_date > now_utc():
                     inet_future.append(hours_until(release_date))
                 elif release_date is None:
@@ -1210,7 +1213,7 @@ class IsoCleaner:
                         self.qbit.delete(torrent_hash, self.cfg.delete_files)
                         log.info("Removed torrent %s due to extension policy.", torrent_hash)
                     except Exception as e:
-                        log.error("qB delete failed: %s", e)
+                        log.error("Failed to delete torrent %s from qBittorrent: %s", torrent_hash, e)
                 else:
                     log.info("DRY-RUN: would remove torrent %s due to extension policy.", torrent_hash)
                 return True
@@ -1285,7 +1288,8 @@ class TorrentGuard:
         try:
             self.qbit.login()
         except Exception as e:
-            log.error("qB login failed: %s", e)
+            log.critical("Fatal: qBittorrent login failed - %s", e)
+            log.critical("Terminating guard process (exit code 2)")
             sys.exit(2)
 
         info = self.qbit.info(torrent_hash)
@@ -1395,6 +1399,8 @@ def main(argv: List[str]) -> None:
     """
     if len(argv) < 2:
         print("Usage: qbit-guard.py <INFO_HASH> [<CATEGORY>]")
+        log.critical("Fatal: Missing required torrent hash argument")
+        log.critical("Terminating guard process (exit code 1)")
         sys.exit(1)
     torrent_hash = argv[1].strip()
     passed_category = (argv[2] if len(argv) >= 3 else "").strip()
@@ -1404,7 +1410,8 @@ def main(argv: List[str]) -> None:
     try:
         guard.run(torrent_hash, passed_category)
     except Exception as e:
-        log.error("Unhandled error: %s", e)
+        log.critical("Fatal: Unhandled error occurred - %s", e)
+        log.critical("Terminating guard process (exit code 1)")
         sys.exit(1)
 
 if __name__ == "__main__":
