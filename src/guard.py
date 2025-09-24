@@ -746,28 +746,54 @@ class InternetDates:
         return None
 
     # Movie lookups
-    def tvmaze_movie_release_date(self, movie: Dict[str, Any]) -> Optional[datetime.datetime]:
-        """Look up movie release date via TVmaze API using IMDB ID if available."""
+    def tvdb_movie_release_date(self, movie: Dict[str, Any]) -> Optional[datetime.datetime]:
+        """Look up movie release date via TheTVDB API using TVDB ID or IMDB ID if available."""
+        tvdb_id = movie.get("tvdbId") or None
         imdb = movie.get("imdbId") or None
-        title = movie.get("title") or None
-        if not imdb and not title:
+        if not tvdb_id and not imdb:
             return None
-            
+
+        token = self._tvdb_login()
+        if not token:
+            return None
+
         try:
-            # Try IMDB lookup first
-            if imdb and not str(imdb).startswith("tt"):
-                imdb = "tt" + str(imdb)
+            # Prefer TVDB ID if available
+            if tvdb_id:
+                url = f"{self.cfg.tvdb_base}/movies/{tvdb_id}"
+                raw = self.http.get(url, headers={"Authorization": "Bearer " + token}, timeout=self.cfg.tvdb_timeout)
+                j = json.loads(raw.decode("utf-8")) if raw else {}
+                data = j.get("data", {})
+                s = data.get("releaseDate") or data.get("year")
+                if s:
+                    # TVDB returns releaseDate as YYYY-MM-DD
+                    if isinstance(s, str) and len(s) == 10 and s[4] == "-" and s[7] == "-":
+                        s += "T00:00:00+00:00"
+                    try:
+                        return datetime.datetime.fromisoformat(s)
+                    except Exception:
+                        return None
+
+            # Fallback: search by IMDB ID
             if imdb:
-                # TVmaze doesn't have great movie support, but we can try
-                # Note: TVmaze is primarily for TV shows, movie support is limited
-                pass
-                
-            # For now, TVmaze movie support is limited, so we return None
-            # In a real implementation, you might want to use a movie-specific API
+                imdb_id = imdb if str(imdb).startswith("tt") else "tt" + str(imdb)
+                url = f"{self.cfg.tvdb_base}/search?imdbId={imdb_id}"
+                raw = self.http.get(url, headers={"Authorization": "Bearer " + token}, timeout=self.cfg.tvdb_timeout)
+                j = json.loads(raw.decode("utf-8")) if raw else {}
+                for result in j.get("data", []):
+                    if result.get("type") == "movie":
+                        s = result.get("releaseDate") or result.get("year")
+                        if s:
+                            if isinstance(s, str) and len(s) == 10 and s[4] == "-" and s[7] == "-":
+                                s += "T00:00:00+00:00"
+                            try:
+                                return datetime.datetime.fromisoformat(s)
+                            except Exception:
+                                return None
+        except Exception as e:
+            log.warning("TVDB: Failed to retrieve release dates for movie %s: %s", tvdb_id, e)
             return None
-        except Exception:
-            return None
-    
+
     def tmdb_movie_release_dates(self, movie: Dict[str, Any]) -> Dict[str, datetime.datetime]:
         """
         Look up various movie release dates via TMDB API.
@@ -1041,7 +1067,7 @@ class PreAirMovieGate:
             for mid in movies:
                 movie = movie_cache[mid]
                 
-                release_date = self.internet.tvmaze_movie_release_date(movie)
+                release_date = self.internet.tvdb_movie_release_date(movie)
                 if release_date and release_date > now_utc():
                     inet_future.append(hours_until(release_date))
                 elif release_date is None:
