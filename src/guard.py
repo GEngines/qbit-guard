@@ -1304,6 +1304,7 @@ class TorrentGuard:
 
         if category_norm not in self.cfg.allowed_categories:
             log.info("Category '%s' not in allowed list %s — skipping.", category, sorted(self.cfg.allowed_categories))
+            log.info("Guard processing completed for torrent %s (category not allowed)", torrent_hash[:8])
             return
 
         # Stop immediately and tag
