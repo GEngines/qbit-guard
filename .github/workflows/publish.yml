@@ -2,14 +2,14 @@ name: Build & Publish Docker image
 
 on:
   # Build on pushes to main that touch Dockerfile or src, and on tags (e.g. v1.2.3)
-#  push:
-#    branches: [ main ]
-#    paths:
-#      - "Dockerfile"
-#      - "src/**"
-#      - ".github/workflows/publish.yml"
-#    tags:
-#      - "v*"
+  push:
+    branches: [ main ]
+    paths:
+      - "Dockerfile"
+      - "src/**"
+      - ".github/workflows/publish.yml"
+    tags:
+      - "v*"
   # Allow manual runs (optional custom tag)
   workflow_dispatch:
     inputs:

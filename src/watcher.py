@@ -82,7 +82,7 @@ def is_connection_error(e: Exception) -> bool:
 def exponential_backoff_sleep(attempt: int, initial_delay: float = INITIAL_BACKOFF_SEC, max_delay: float = MAX_BACKOFF_SEC) -> None:
     """Sleep with exponential backoff, capped at max_delay."""
     delay = min(initial_delay * (2 ** attempt), max_delay)
-    log.warning("Connection failed, retrying in %.1f seconds (attempt %d/%d): %s", delay, attempt + 1, MAX_RETRY_ATTEMPTS, str(e).split('\n')[0][:100])
+    log.info("Connection failed, retrying in %.1f seconds (attempt %d/%d)", delay, attempt + 1, MAX_RETRY_ATTEMPTS)
     time.sleep(delay)
 
 def qb_sync_maindata(http: HttpClient, cfg: Config, rid: int) -> Dict:
@@ -189,7 +189,13 @@ def main():
                 try:
                     guard.run(h, category)
                 except Exception as e:
-                    log.error("Guard run failed for torrent %s (%s): %s", h[:8], name[:50], str(e).split('\n')[0][:100])
+                    error_str = str(e).split('\n')[0][:100]
+                    if "404" in error_str or "Not Found" in error_str:
+                        log.warning("Torrent %s (%s) was deleted before processing completed: %s", h[:8], name[:50], error_str)
+                    elif "401" in error_str or "403" in error_str or "Unauthorized" in error_str or "Forbidden" in error_str:
+                        log.error("Authentication failed while processing torrent %s (%s): %s", h[:8], name[:50], error_str)
+                    else:
+                        log.error("Guard run failed for torrent %s (%s): %s", h[:8], name[:50], error_str)
                 finally:
                     seen.add(h)
 
