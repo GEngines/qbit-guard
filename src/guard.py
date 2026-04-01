@@ -23,6 +23,7 @@ import os, sys, re, json, ssl, time, datetime, logging
 import http.cookiejar as cookiejar
 import urllib.parse as uparse
 import urllib.request as ureq
+import urllib.error as uerr
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 
@@ -102,6 +103,26 @@ def _generate_detailed_extension_summary(disallowed_files: List[Dict[str, Any]],
     return "; ".join(summary_parts)
 
 
+def short_error(e: Exception, max_len: int = 140) -> str:
+    """Return a compact single-line error string for logs."""
+    return str(e).split("\n")[0][:max_len]
+
+
+def is_connection_error(e: Exception) -> bool:
+    """Check whether an exception looks like a transient network or service connectivity failure."""
+    if isinstance(e, uerr.HTTPError):
+        return e.code in (401, 403, 429, 500, 502, 503, 504)
+    if isinstance(e, (uerr.URLError, ConnectionError, OSError, TimeoutError)):
+        return True
+    err = str(e).lower()
+    return "timeout" in err or "connection" in err or "network is unreachable" in err
+
+
+def compute_backoff_delay(attempt: int, initial_delay: float, max_delay: float) -> float:
+    """Return exponential backoff delay capped at max_delay."""
+    return min(initial_delay * (2 ** max(attempt, 0)), max_delay)
+
+
 # --------------------------- Config ---------------------------
 
 # Canonical sets
@@ -133,6 +154,9 @@ class Config:
     dry_run: bool = os.getenv("QBIT_DRY_RUN", "0") == "1"
     delete_files: bool = os.getenv("QBIT_DELETE_FILES", "true").lower() in ("1","true","yes")
     user_agent: str = os.getenv("USER_AGENT", "qbit-guard/2.0")
+    qbit_request_retries: int = int(os.getenv("QBIT_REQUEST_RETRIES", "3"))
+    qbit_request_initial_backoff_sec: float = float(os.getenv("QBIT_REQUEST_INITIAL_BACKOFF_SEC", "1.0"))
+    qbit_request_max_backoff_sec: float = float(os.getenv("QBIT_REQUEST_MAX_BACKOFF_SEC", "15.0"))
 
     # Pre-air (Sonarr)
     enable_preair: bool = os.getenv("ENABLE_PREAIR_CHECK", "1") == "1"
@@ -180,6 +204,7 @@ class Config:
     metadata_poll_interval: float = float(os.getenv("METADATA_POLL_INTERVAL", "1.5"))
     metadata_max_wait_sec: int = int(os.getenv("METADATA_MAX_WAIT_SEC", "0"))  # 0 = wait indefinitely
     metadata_download_budget_bytes: int = int(os.getenv("METADATA_DOWNLOAD_BUDGET_BYTES", "0"))  # 0 = no cap
+    metadata_max_transient_errors: int = int(os.getenv("METADATA_MAX_TRANSIENT_ERRORS", "8"))
 
     # Torrent age validation (to filter fake torrents with 0 age)
     min_torrent_age_minutes: int = int(os.getenv("MIN_TORRENT_AGE_MINUTES", "0"))  # Minimum age in minutes; 0 = disabled (default)
@@ -342,40 +367,86 @@ class QbitClient:
     def _url(self, path: str) -> str:
         return f"{self.cfg.qbit_host}{path}"
 
+    def _retry(self, operation: str, fn):
+        attempts = max(1, self.cfg.qbit_request_retries)
+        last = None
+        for attempt in range(attempts):
+            try:
+                return fn()
+            except Exception as e:
+                last = e
+                if not is_connection_error(e) or attempt == attempts - 1:
+                    raise
+                delay = compute_backoff_delay(
+                    attempt,
+                    self.cfg.qbit_request_initial_backoff_sec,
+                    self.cfg.qbit_request_max_backoff_sec,
+                )
+                log.warning(
+                    "qB %s failed (attempt %d/%d): %s; retrying in %.1f seconds",
+                    operation,
+                    attempt + 1,
+                    attempts,
+                    short_error(e),
+                    delay,
+                )
+                time.sleep(delay)
+        raise last
+
     def login(self) -> None:
         """Authenticate with qBittorrent."""
         # NOTE: If you hit 403s, add CSRF headers in HttpClient (Referer/Origin) or adjust qB settings.
         log.info("Attempting qBittorrent login at %s", self.cfg.qbit_host)
-        self.http.post_form(self._url("/api/v2/auth/login"),
-                            {"username": self.cfg.qbit_user, "password": self.cfg.qbit_pass})
+        self._retry(
+            "login",
+            lambda: self.http.post_form(
+                self._url("/api/v2/auth/login"),
+                {"username": self.cfg.qbit_user, "password": self.cfg.qbit_pass},
+            ),
+        )
         log.info("Successfully authenticated with qBittorrent")
 
     def get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = self._url(path)
-        if params: url += "?" + uparse.urlencode(params, doseq=True)
-        raw = self.http.get(url)
+        if params:
+            url += "?" + uparse.urlencode(params, doseq=True)
+        raw = self._retry(f"GET {path}", lambda: self.http.get(url))
         return None if not raw else json.loads(raw.decode("utf-8"))
 
     def post(self, path: str, data: Optional[Dict[str, Any]] = None) -> None:
-        self.http.post_form(self._url(path), data or {})
+        self._retry(f"POST {path}", lambda: self.http.post_form(self._url(path), data or {}))
 
-    def start(self, h: str) -> None:
+    def start(self, h: str) -> bool:
         """Start torrent, trying /start then /resume."""
+        last_error = None
         for p in ("/api/v2/torrents/start", "/api/v2/torrents/resume"):
             try:
-                self.post(p, {"hashes": h}); return
-            except Exception:
+                self.post(p, {"hashes": h})
+                return True
+            except Exception as e:
+                last_error = e
                 continue
-        log.warning("qB: could not start/resume %s", h)
+        if last_error:
+            log.warning("qB: could not start/resume %s: %s", h, short_error(last_error))
+        else:
+            log.warning("qB: could not start/resume %s", h)
+        return False
 
-    def stop(self, h: str) -> None:
+    def stop(self, h: str) -> bool:
         """Stop torrent, trying /stop then /pause."""
+        last_error = None
         for p in ("/api/v2/torrents/stop", "/api/v2/torrents/pause"):
             try:
-                self.post(p, {"hashes": h}); return
-            except Exception:
+                self.post(p, {"hashes": h})
+                return True
+            except Exception as e:
+                last_error = e
                 continue
-        log.warning("qB: could not stop/pause %s", h)
+        if last_error:
+            log.warning("qB: could not stop/pause %s: %s", h, short_error(last_error))
+        else:
+            log.warning("qB: could not stop/pause %s", h)
+        return False
 
     def delete(self, h: str, delete_files: bool) -> None:
         self.post("/api/v2/torrents/delete", {"hashes": h, "deleteFiles": "true" if delete_files else "false"})
@@ -1109,6 +1180,31 @@ class MetadataFetcher:
         self.cfg = cfg
         self.qbit = qbit
 
+    def _safe_stop(self, torrent_hash: str, context: str) -> None:
+        stop_attempts = max(1, self.cfg.qbit_request_retries)
+        for attempt in range(stop_attempts):
+            if self.qbit.stop(torrent_hash):
+                if attempt > 0:
+                    log.info("Metadata fetch: stop recovered for torrent %s after %d retry attempt(s).", torrent_hash[:8], attempt)
+                return
+            if attempt == stop_attempts - 1:
+                break
+            delay = compute_backoff_delay(
+                attempt,
+                self.cfg.qbit_request_initial_backoff_sec,
+                self.cfg.qbit_request_max_backoff_sec,
+            )
+            log.warning(
+                "Metadata fetch: failed to stop torrent %s after %s; retrying stop in %.1f seconds (attempt %d/%d)",
+                torrent_hash[:8],
+                context,
+                delay,
+                attempt + 1,
+                stop_attempts,
+            )
+            time.sleep(delay)
+        log.error("Metadata fetch: unable to confirm stop for torrent %s after %s.", torrent_hash[:8], context)
+
     def fetch(self, torrent_hash: str) -> List[Dict[str, Any]]:
         """
         Wait until /api/v2/torrents/files is non-empty.
@@ -1116,7 +1212,15 @@ class MetadataFetcher:
         Optional: max wait and download budget guards.
         """
         # If already present, don't start it.
-        files = self.qbit.files(torrent_hash) or []
+        files = []
+        try:
+            files = self.qbit.files(torrent_hash) or []
+        except Exception as e:
+            log.warning(
+                "Metadata fetch: initial file probe failed for torrent %s: %s. Continuing with transient error budget.",
+                torrent_hash[:8],
+                short_error(e),
+            )
         if files:
             return files
 
@@ -1124,31 +1228,51 @@ class MetadataFetcher:
         start_ts = time.time()
         ticks = 0
         base_downloaded = None
+        consecutive_errors = 0
+        last_error = None
 
         try:
             while True:
-                # Best-effort reannounce every ~15s to hasten magnet resolution
-                if ticks % max(1, int(15.0 / max(self.cfg.metadata_poll_interval, 0.5))) == 0:
-                    self.qbit.reannounce(torrent_hash)
+                try:
+                    # Best-effort reannounce every ~15s to hasten magnet resolution
+                    if ticks % max(1, int(15.0 / max(self.cfg.metadata_poll_interval, 0.5))) == 0:
+                        self.qbit.reannounce(torrent_hash)
 
-                files = self.qbit.files(torrent_hash) or []
-                if files:
-                    break
-
-                # State / downloaded budget guard
-                info = self.qbit.info(torrent_hash) or {}
-                if info:
-                    state = (info.get("state") or "").lower()
-                    if state in ("pauseddl","pausedup","stalleddl"):
-                        self.qbit.start(torrent_hash)
-                    cur_downloaded = int(info.get("downloaded_session") or info.get("downloaded") or 0)
-                    if base_downloaded is None:
-                        base_downloaded = cur_downloaded
-                    delta = cur_downloaded - base_downloaded
-                    if self.cfg.metadata_download_budget_bytes > 0 and delta > self.cfg.metadata_download_budget_bytes:
-                        log.warning("Metadata wait exceeded budget (%s > %s); aborting wait.", delta, self.cfg.metadata_download_budget_bytes)
-                        files = []
+                    files = self.qbit.files(torrent_hash) or []
+                    if files:
                         break
+
+                    # State / downloaded budget guard
+                    info = self.qbit.info(torrent_hash) or {}
+                    if info:
+                        state = (info.get("state") or "").lower()
+                        if state in ("pauseddl","pausedup","stalleddl"):
+                            self.qbit.start(torrent_hash)
+                        cur_downloaded = int(info.get("downloaded_session") or info.get("downloaded") or 0)
+                        if base_downloaded is None:
+                            base_downloaded = cur_downloaded
+                        delta = cur_downloaded - base_downloaded
+                        if self.cfg.metadata_download_budget_bytes > 0 and delta > self.cfg.metadata_download_budget_bytes:
+                            log.warning("Metadata wait exceeded budget (%s > %s); aborting wait.", delta, self.cfg.metadata_download_budget_bytes)
+                            files = []
+                            break
+
+                    consecutive_errors = 0
+                except Exception as e:
+                    last_error = e
+                    consecutive_errors += 1
+                    if consecutive_errors > self.cfg.metadata_max_transient_errors or not is_connection_error(e):
+                        raise RuntimeError(
+                            "metadata fetch qB failure after %d transient error(s): %s"
+                            % (consecutive_errors, short_error(e))
+                        ) from e
+                    log.warning(
+                        "Metadata fetch transient qB error for torrent %s (attempt %d/%d): %s",
+                        torrent_hash[:8],
+                        consecutive_errors,
+                        self.cfg.metadata_max_transient_errors,
+                        short_error(e),
+                    )
 
                 if self.cfg.metadata_max_wait_sec > 0 and (time.time() - start_ts) >= self.cfg.metadata_max_wait_sec:
                     break
@@ -1157,7 +1281,10 @@ class MetadataFetcher:
                 ticks += 1
         finally:
             # Stop asap after metadata obtained (or on abort)
-            self.qbit.stop(torrent_hash)
+            stop_context = "metadata resolution"
+            if last_error is not None:
+                stop_context = "metadata error (%s)" % short_error(last_error, 80)
+            self._safe_stop(torrent_hash, stop_context)
 
         return files or []
 
@@ -1321,7 +1448,10 @@ class TorrentGuard:
             log.critical("Terminating guard process (exit code 2)")
             sys.exit(2)
 
-        info = self.qbit.info(torrent_hash)
+        try:
+            info = self.qbit.info(torrent_hash)
+        except Exception as e:
+            raise RuntimeError("qB torrent info lookup failed: %s" % short_error(e)) from e
         if not info:
             log.info("No torrent found for hash; exiting.")
             return
@@ -1332,7 +1462,7 @@ class TorrentGuard:
         log.info("Processing: hash=%s category='%s' name='%s'", torrent_hash, category, name)
 
         if category_norm not in self.cfg.allowed_categories:
-            log.info("Category '%s' not in allowed list %s — skipping.", category, sorted(self.cfg.allowed_categories))
+            log.info("Category '%s' not in allowed list %s - skipping.", category, sorted(self.cfg.allowed_categories))
             log.info("Guard processing completed for torrent %s (category not allowed)", torrent_hash[:8])
             return
 
@@ -1377,7 +1507,10 @@ class TorrentGuard:
                 log.warning("Torrent age check: creation_date not available, skipping age validation.")
 
         # Tracker hosts (for whitelist decisions)
-        trackers = self.qbit.trackers(torrent_hash) or []
+        try:
+            trackers = self.qbit.trackers(torrent_hash) or []
+        except Exception as e:
+            raise RuntimeError("qB tracker lookup failed: %s" % short_error(e)) from e
         tracker_hosts = {domain_from_url(t.get("url","")) for t in trackers if t.get("url")}
 
         # 1) PRE-AIR gate first (TV shows and movies)
@@ -1441,7 +1574,10 @@ class TorrentGuard:
 
         # 2) Metadata + ISO/Extension policy cleaner
         if self.cfg.enable_iso_check:
-            files = self.metadata.fetch(torrent_hash)
+            try:
+                files = self.metadata.fetch(torrent_hash)
+            except Exception as e:
+                raise RuntimeError("metadata fetch failed: %s" % short_error(e)) from e
             if not files:
                 log.warning("Metadata not available; skipping ISO/ext check.")
             else:

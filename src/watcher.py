@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-watcher.py  — stateless
+watcher.py - stateless
 
 Attaches to qBittorrent's /api/v2/sync/maindata and triggers guard.TorrentGuard
 when new torrents appear. No disk state is kept; only an in-memory set of

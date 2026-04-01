@@ -15,6 +15,9 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 | `QBIT_DELETE_FILES` | `true` | Delete files when removing torrents |
 | `QBIT_IGNORE_TLS` | `0` | Set to `1` to ignore SSL certificate errors |
 | `QBIT_DRY_RUN` | `0` | Set to `1` for testing mode (no actual deletions) |
+| `QBIT_REQUEST_RETRIES` | `3` | Retry transient qBittorrent API failures this many times per request |
+| `QBIT_REQUEST_INITIAL_BACKOFF_SEC` | `1.0` | Initial retry delay for qBittorrent API requests |
+| `QBIT_REQUEST_MAX_BACKOFF_SEC` | `15.0` | Maximum retry delay for qBittorrent API requests |
 
 ---
 
@@ -114,6 +117,7 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 | `METADATA_POLL_INTERVAL` | `1.5` | Seconds between file list checks during metadata fetching |
 | `METADATA_MAX_WAIT_SEC` | `0` | Max wait for metadata resolution (`0` = infinite) |
 | `METADATA_DOWNLOAD_BUDGET_BYTES` | `0` | Max bytes to download during metadata wait (`0` = no limit) |
+| `METADATA_MAX_TRANSIENT_ERRORS` | `8` | Allow this many transient qB errors during metadata fetch before failing the guard run |
 
 ---
 
@@ -232,6 +236,11 @@ LOG_LEVEL=DETAILED  # Enhanced extension logging
 # Faster polling
 WATCH_POLL_SECONDS=1.0
 
+# Retry transient qB API failures
+QBIT_REQUEST_RETRIES=5
+QBIT_REQUEST_INITIAL_BACKOFF_SEC=1
+QBIT_REQUEST_MAX_BACKOFF_SEC=20
+
 # Increased timeouts for slow networks
 SONARR_TIMEOUT_SEC=90
 RADARR_TIMEOUT_SEC=90
@@ -243,6 +252,7 @@ WATCH_PROCESS_EXISTING_AT_START=1
 # Metadata limits for large torrents
 METADATA_MAX_WAIT_SEC=300
 METADATA_DOWNLOAD_BUDGET_BYTES=104857600  # 100MB
+METADATA_MAX_TRANSIENT_ERRORS=12
 ```
 
 ### Selective File Control Example

@@ -17,6 +17,9 @@ QBIT_ALLOWED_CATEGORIES="tv-sonarr,radarr"    # Comma-separated categories to pr
 QBIT_DELETE_FILES=true                        # Delete files when removing torrents
 QBIT_IGNORE_TLS=0                            # Set to 1 to ignore SSL certificate errors
 QBIT_DRY_RUN=0                               # Set to 1 for testing (no actual deletions)
+QBIT_REQUEST_RETRIES=3                       # Retry transient qB API failures per request
+QBIT_REQUEST_INITIAL_BACKOFF_SEC=1.0         # Initial qB request retry delay
+QBIT_REQUEST_MAX_BACKOFF_SEC=15.0            # Maximum qB request retry delay
 ```
 
 ### Important Notes
@@ -139,6 +142,7 @@ MIN_KEEPABLE_VIDEO_MB=50                     # Minimum size for video files to k
 METADATA_POLL_INTERVAL=1.5                   # Seconds between file list checks
 METADATA_MAX_WAIT_SEC=0                      # Max wait for metadata (0 = infinite)
 METADATA_DOWNLOAD_BUDGET_BYTES=0             # Max bytes to download while waiting (0 = no limit)
+METADATA_MAX_TRANSIENT_ERRORS=8              # Allow a few transient qB errors before failing
 ```
 
 ### How ISO Cleanup Works
@@ -147,6 +151,10 @@ METADATA_DOWNLOAD_BUDGET_BYTES=0             # Max bytes to download while waiti
 2. **Video Check**: Looks for keepable video files above the size threshold
 3. **Cleanup**: Removes torrents with no keepable video content
 4. **Blocklisting**: Automatically blocklists removed torrents in appropriate *arr service
+
+If qbit-guard briefly loses connectivity to qBittorrent while fetching metadata,
+it now retries qB API calls and tolerates a limited number of transient metadata
+fetch errors before giving up on that guard run.
 
 ---
 
