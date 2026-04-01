@@ -25,6 +25,9 @@ Complete reference of all environment variables supported by qbit-guard, organiz
 | `WATCH_POLL_SECONDS` | `3.0` | How often to check qBittorrent for new torrents (seconds) |
 | `WATCH_PROCESS_EXISTING_AT_START` | `0` | Process existing torrents when container starts (`0` or `1`) |
 | `WATCH_RESCAN_KEYWORD` | `rescan` | Keyword in category/tags to force reprocessing |
+| `GUARD_RUN_MAX_RETRIES` | `3` | Retry failed per-torrent guard runs this many times (`0` disables retries) |
+| `GUARD_RUN_INITIAL_BACKOFF_SEC` | `30.0` | Initial delay before retrying a failed guard run |
+| `GUARD_RUN_MAX_BACKOFF_SEC` | `900.0` | Maximum delay between failed guard-run retries |
 
 ---
 
@@ -239,6 +242,11 @@ TVMAZE_TIMEOUT_SEC=15
 
 # Process existing torrents on startup
 WATCH_PROCESS_EXISTING_AT_START=1
+
+# Retry per-torrent guard failures
+GUARD_RUN_MAX_RETRIES=5
+GUARD_RUN_INITIAL_BACKOFF_SEC=30
+GUARD_RUN_MAX_BACKOFF_SEC=600
 
 # Metadata limits for large torrents
 METADATA_MAX_WAIT_SEC=300

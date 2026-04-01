@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-watcher.py  — stateless
+watcher.py - stateless
 
 Attaches to qBittorrent's /api/v2/sync/maindata and triggers guard.TorrentGuard
-when new torrents appear. No disk state is kept; only an in-memory set of
-hashes seen during the current process lifetime.
+when new torrents appear. No disk state is kept beyond the current process
+lifetime, but failed guard runs can be retried in-memory with backoff.
 
 Behavior:
 - On first snapshot:
   - If WATCH_PROCESS_EXISTING_AT_START=1, process all currently present torrents.
-  - Otherwise, just index them (skip processing).
+  - Otherwise, index them and only process hashes that already have scheduled
+    retries from this process lifetime.
 - During runtime:
   - Process a torrent the first time we see its infohash.
+  - Retry guard failures with exponential backoff.
   - If qB reports torrents_removed, we forget those hashes so a future re-add
     will be processed again.
 - Optional: force a rescan if category or tags contain WATCH_RESCAN_KEYWORD
@@ -19,7 +21,7 @@ Behavior:
 """
 
 import os, sys, json, time, signal, logging, urllib.parse as uparse
-from typing import Dict, Set, Tuple
+from typing import Dict, Set, Tuple, Any
 import urllib.error
 
 # Your class-based guard + clients
@@ -66,6 +68,9 @@ RESCAN_KEYWORD = os.getenv("WATCH_RESCAN_KEYWORD", "rescan").strip().lower()  # 
 MAX_RETRY_ATTEMPTS = int(os.getenv("QBIT_MAX_RETRY_ATTEMPTS", "5"))
 INITIAL_BACKOFF_SEC = float(os.getenv("QBIT_INITIAL_BACKOFF_SEC", "1.0"))
 MAX_BACKOFF_SEC = float(os.getenv("QBIT_MAX_BACKOFF_SEC", "60.0"))
+GUARD_RUN_MAX_RETRIES = int(os.getenv("GUARD_RUN_MAX_RETRIES", "3"))
+GUARD_RUN_INITIAL_BACKOFF_SEC = float(os.getenv("GUARD_RUN_INITIAL_BACKOFF_SEC", "30.0"))
+GUARD_RUN_MAX_BACKOFF_SEC = float(os.getenv("GUARD_RUN_MAX_BACKOFF_SEC", "900.0"))
 
 def is_connection_error(e: Exception) -> bool:
     """Check if an exception indicates a connection problem that warrants retry."""
@@ -85,6 +90,10 @@ def exponential_backoff_sleep(attempt: int, initial_delay: float = INITIAL_BACKO
     log.info("Connection failed, retrying in %.1f seconds (attempt %d/%d)", delay, attempt + 1, MAX_RETRY_ATTEMPTS)
     time.sleep(delay)
 
+def compute_backoff_delay(attempt: int, initial_delay: float, max_delay: float) -> float:
+    """Return exponential backoff delay, capped at max_delay."""
+    return min(initial_delay * (2 ** max(attempt, 0)), max_delay)
+
 def qb_sync_maindata(http: HttpClient, cfg: Config, rid: int) -> Dict:
     url = f"{cfg.qbit_host}/api/v2/sync/maindata"
     if rid:
@@ -92,12 +101,15 @@ def qb_sync_maindata(http: HttpClient, cfg: Config, rid: int) -> Dict:
     raw = http.get(url)
     return {} if not raw else json.loads(raw.decode("utf-8"))
 
-def _should_process(h: str, t: Dict, seen: Set[str]) -> Tuple[bool, str]:
+def _should_process(h: str, t: Dict, seen: Set[str], retry_state: Dict[str, Dict[str, Any]], now_ts: float) -> Tuple[bool, str]:
     # Manual rescan via keyword in category or tags
     cat = (t.get("category") or "").strip().lower()
     tags = (t.get("tags") or "").strip().lower()
     if RESCAN_KEYWORD and (RESCAN_KEYWORD in cat or RESCAN_KEYWORD in tags):
         return True, "manual-rescan"
+    retry = retry_state.get(h)
+    if retry and now_ts >= float(retry.get("next_retry_at", 0.0)):
+        return True, "retry"
     if h not in seen:
         return True, "new"
     return False, "already-seen"
@@ -137,11 +149,12 @@ def main():
 
     seen: Set[str] = set()
     rid = 0
+    retry_state: Dict[str, Dict[str, Any]] = {}
     first_snapshot = True
     consecutive_failures = 0
     log.info(
-        "Watcher (stateless) started - version %s, host=%s, poll=%.1fs, process_existing_at_start=%s, rescan-keyword='%s'",
-        VERSION, cfg.qbit_host, POLL_SEC, PROCESS_EXISTING_AT_START, RESCAN_KEYWORD or "(disabled)"
+        "Watcher (stateless) started - version %s, host=%s, poll=%.1fs, process_existing_at_start=%s, rescan-keyword='%s', guard_run_max_retries=%d",
+        VERSION, cfg.qbit_host, POLL_SEC, PROCESS_EXISTING_AT_START, RESCAN_KEYWORD or "(disabled)", GUARD_RUN_MAX_RETRIES
     )
 
     while not stop["flag"]:
@@ -166,21 +179,26 @@ def main():
                     log.info("Initial snapshot: processing %d existing torrents.", len(present))
                     # fall through: they will be processed below (since not in 'seen' yet)
                 else:
-                    seen |= present
-                    log.info("Initial snapshot: indexed %d existing torrents (not processing).", len(present))
-                    time.sleep(POLL_SEC)
-                    continue
+                    seen |= {h for h in present if h not in retry_state}
+                    retry_candidates = sum(1 for h in present if h in retry_state)
+                    log.info(
+                        "Initial snapshot: indexed %d existing torrents (not processing), %d scheduled retry(s) remain eligible.",
+                        len(present),
+                        retry_candidates,
+                    )
 
             # Forget hashes for removed torrents so re-adds will trigger again
             for h in removed:
                 if h in seen:
                     seen.discard(h)
+                retry_state.pop(h, None)
 
             # Handle new/changed torrents in this delta
+            now_ts = time.time()
             for h, t in torrents.items():
                 name = t.get("name") or ""
                 category = (t.get("category") or "").strip()
-                ok, reason = _should_process(h, t, seen)
+                ok, reason = _should_process(h, t, seen, retry_state, now_ts)
                 if not ok:
                     log.debug("Skip %s | %s", h, reason)
                     continue
@@ -188,16 +206,51 @@ def main():
                 log.info("Processing %s | reason=%s | category='%s' | name='%s'", h, reason, category, name)
                 try:
                     guard.run(h, category)
+                    if h in retry_state:
+                        attempt_count = int(retry_state[h].get("attempt", 0))
+                        log.info("Guard retry succeeded for torrent %s after %d failed attempt(s).", h[:8], attempt_count)
+                        retry_state.pop(h, None)
+                    seen.add(h)
                 except Exception as e:
                     error_str = str(e).split('\n')[0][:100]
                     if "404" in error_str or "Not Found" in error_str:
                         log.warning("Torrent %s (%s) was deleted before processing completed: %s", h[:8], name[:50], error_str)
+                        retry_state.pop(h, None)
+                        seen.add(h)
                     elif "401" in error_str or "403" in error_str or "Unauthorized" in error_str or "Forbidden" in error_str:
                         log.error("Authentication failed while processing torrent %s (%s): %s", h[:8], name[:50], error_str)
+                        retry_state.pop(h, None)
+                        seen.add(h)
                     else:
-                        log.error("Guard run failed for torrent %s (%s): %s", h[:8], name[:50], error_str)
-                finally:
-                    seen.add(h)
+                        seen.add(h)
+                        if GUARD_RUN_MAX_RETRIES <= 0:
+                            log.error("Guard run failed for torrent %s (%s): %s", h[:8], name[:50], error_str)
+                            continue
+
+                        prev_attempt = int(retry_state.get(h, {}).get("attempt", 0))
+                        next_attempt = prev_attempt + 1
+                        if next_attempt > GUARD_RUN_MAX_RETRIES:
+                            retry_state.pop(h, None)
+                            log.error(
+                                "Guard run failed for torrent %s (%s): %s | retry budget exhausted after %d attempt(s)",
+                                h[:8], name[:50], error_str, prev_attempt
+                            )
+                            continue
+
+                        delay = compute_backoff_delay(
+                            next_attempt - 1,
+                            GUARD_RUN_INITIAL_BACKOFF_SEC,
+                            GUARD_RUN_MAX_BACKOFF_SEC,
+                        )
+                        retry_state[h] = {
+                            "attempt": next_attempt,
+                            "next_retry_at": now_ts + delay,
+                            "last_error": error_str,
+                        }
+                        log.warning(
+                            "Guard run failed for torrent %s (%s): %s | retrying in %.1f seconds (attempt %d/%d)",
+                            h[:8], name[:50], error_str, delay, next_attempt, GUARD_RUN_MAX_RETRIES
+                        )
 
         except Exception as e:
             if is_connection_error(e):
